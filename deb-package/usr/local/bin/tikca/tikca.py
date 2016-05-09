@@ -187,7 +187,7 @@ class TIKCAcontrol():
                                 (nextevent[3].get("SUMMARY"), d_end)
             logging.debug(self.ANNOUNCEMENT)
             self.NEXTSUBDIR = datetime.datetime.fromtimestamp(nextevent[0]).strftime('%Y%m%d') + "_" + uid
-            if not grabber.get_recstatus() == "RECORDING":
+            if not grabber.get_recstatus() in ["RECORDING", "PAUSED", "STARTING", "PAUSING]":
                 self.CURSUBDIR = self.NEXTSUBDIR
             # We need two variables for that. Because: Image recording A is scheduled from 10:00 till 10:30,
             # recording B from 10:31 to 11:00. When A takes until 10:35, stuff gets written into B's directory from 10:30 on.
