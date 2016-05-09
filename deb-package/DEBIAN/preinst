@@ -1,0 +1,25 @@
+ret=false
+getent passwd matterhorn > /dev/null 2>&1 && ret=true
+
+if ! $ret; then
+	adduser --system --no-create-home --disabled-login matterhorn
+fi
+
+if [ ! -d /srv/recordings ]; then
+	mkdir -p /srv/recordings
+fi
+
+chown -R matterhorn /srv/recordings/
+
+if [ ! -f /var/log/tikca.log ]; then
+	touch /var/log/tikca.log
+fi
+chown matterhorn /var/log/tikca.log
+
+if [ ! -f /var/log/tikca_comm.log ]; then
+        touch /var/log/tikca_comm.log
+fi
+chown matterhorn /var/log/tikca_comm.log
+
+exit 0
+

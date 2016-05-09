@@ -1,0 +1,4 @@
+if [ -f /etc/init.d/tikca ]; then
+    service tikca stop
+fi
+exit 0

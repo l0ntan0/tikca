@@ -1,0 +1,11 @@
+Package: tikca
+Version: 2.1.2.3
+Section: base
+Priority: optional
+Architecture: all
+Depends: python3, python3-six, gstreamer1.0-plugins-good, gir1.2-gstreamer-1.0, python3-dateutil, python3-icalendar, python3-pycurl, curl, python3-gi, gstreamer1.0-plugins-bad, python3-configobj, gstreamer1.0-tools
+Maintainer: Pascal Zurek <pascal.zurek@tik.uni-stuttgart.de>
+Description: Opencast Capture Agent
+ This program records video and audio streams from a MPEGTS stream via GStreamer. 
+ It communicates with Opencast (former Matterhorn) and can be controlled by
+ UDP signals from a CRESTRON console.

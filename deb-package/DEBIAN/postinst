@@ -1,0 +1,11 @@
+#if [ -f /etc/init.d/tikca ]; then
+#	rm /etc/init.d/tikca
+#fi
+
+#if [ -f /etc/init/tikca.conf ]; then
+#    ln -s /etc/init/tikca.conf /etc/init.d/tikca
+#
+#fi
+
+update-rc.d tikca defaults
+service tikca start

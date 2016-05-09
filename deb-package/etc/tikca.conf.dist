@@ -1,0 +1,78 @@
+###
+# TIKCA Configuration
+##
+
+[capture]
+# Example for a ENC300
+src1_uri                = "udp://239.25.1.1:4444" #v4701
+src1_stdflavor          = "presentation/source
+src1_fn_vid             = "src1.mkv"
+src1_fn_aud             = "src1.aac"
+src1_iface              = "eth0"
+src1_adminip            = "172.25.111.1"
+
+# Example for a Sony TPZ Cam
+#src1_uri                = "rtsp://172.25.111.3/video1"
+#src1_stdflavor          = "presentation/source"
+#src1_fn_vid             = "src1.mkv"
+#src1_fn_aud             = "src1.aac"
+#src1_iface              = "eth0"
+#src1_adminip            = "172.25.39.1"
+
+src2_uri                = "udp://239.25.39.2:4444"
+src2_stdflavor          = "presentation2/source"
+src2_fn_vid             = "src2.mkv"
+src2_fn_aud             = "src2.aac"
+src2_iface              = "eth0"
+src2_adminip            = "172.25.39.2"
+
+stopafterpaused         = 15    # time in minutes after which a paused recording is considered finished
+maxduration             = 360   # time in minutes after which a recording is stopped (assuming somebody forgot to hit stop)
+
+# path to recording directory is managed in pyca.conf!
+
+retry                   = 4
+retrywait               = 20
+
+# autostart (bool): record automatically when scheduled (for rooms without ctrl station)
+autostart               = True
+
+[sbs]
+sbs_source_URI          = ""
+sbs_outfile             = "sbs.mts"
+
+[udp]
+ctrlstation             = '127.0.0.1'
+listenhost              = '127.0.0.1'
+listenport              = 8888
+sendport                = 8889
+allowedhost             = '*'
+
+
+[announcement]
+# announcement rest service
+host                    = '127.0.0.1'
+port                    = 5555
+allowedhost             = '*'
+
+[ingest]
+retrytime               = "5"   # in minutes
+
+[unscheduled]
+# seriesid in which unscheduled recordings should be uploaded
+serid                   = "c2a185a3-0bf4-4163-b241-6eface8ae92b"
+# workflow with which unscheduled recordings should be uploaded
+workflow                = "aonly"
+
+[logging]
+fn                      = "/var/log/tikca.log"
+comm                    = "/var/log/tikca_comm.log"
+
+[outlet]
+host                    = '172.25.107.11'
+reclight                = '1.3.6.1.4.1.28507.29.1.3.1.2.1.3.4'
+update_frequency        = 10
+
+
+
+
