@@ -16,9 +16,16 @@ import shlex
 import json
 import zipfile
 import csv
+import argparse
 
-CONFIG = ca.update_configuration('/etc/pyca.conf')
-TIKCFG = ConfigObj('/etc/tikca.conf', list_values=True)
+parser = argparse.ArgumentParser()
+parser.add_argument("--pycacfg", help="the pyca configfile", default='/etc/pyca.conf')
+parser.add_argument("--tikcacfg", help="the tikca configfile", default='/etc/tikca.conf')
+args = parser.parse_args()
+
+print(args.tikcacfg)
+CONFIG = ca.update_configuration(args.pycacfg)
+TIKCFG = ConfigObj(args.tikcacfg, list_values=True)
 caproot = CONFIG['capture']['directory']
 
 class Ingester:
@@ -33,6 +40,8 @@ class Ingester:
         # needed because the demuxer has dynamically added pads
         # here, the pads are selected due to the naming/content
 
+
+        logging.debug("input element %s"%element)
         caps = src_pad.query_caps(None)
         name = caps.to_string()
         logging.debug("Pads added: %s"%(name))
@@ -386,25 +395,35 @@ class Ingester:
         self.src1.set_property("location", caproot + "/" + dirname + "/" + infile)
         self.pipeline.add(self.src1)
 
-        self.capsFilter1 = Gst.ElementFactory.make("capsfilter", None)
+        self.tsparse = Gst.ElementFactory.make("tsparse","tsparser")
+        self.pipeline.add(self.tsparse)
+
+        self.capsFilter1 = Gst.ElementFactory.make("capsfilter", "videostreamfilter")
         self.capsFilter1.props.caps = self.caps
         self.pipeline.add(self.capsFilter1)
 
-        self.audiocapsfilter1 = Gst.ElementFactory.make("capsfilter", None)
+        self.audiocapsfilter1 = Gst.ElementFactory.make("capsfilter", "audiofilter")
         self.audiocapsfilter1.props.caps = self.audiocaps
         self.pipeline.add(self.audiocapsfilter1)
 
-        self.videocapsfilter1 = Gst.ElementFactory.make("capsfilter", None)
+        self.videocapsfilter1 = Gst.ElementFactory.make("capsfilter", "videofilter")
         self.videocapsfilter1.props.caps = self.videocaps
         self.pipeline.add(self.videocapsfilter1)
 
-        self.queue_aud1 = Gst.ElementFactory.make('queue', None)
+        self.queue_aud1 = Gst.ElementFactory.make('queue', "audioqueue")
+        self.queue_aud1.set_property("max-size-buffers",0)
+        self.queue_aud1.set_property("max-size-time",0)
         self.pipeline.add(self.queue_aud1)
-        self.queue_vid1 = Gst.ElementFactory.make('queue', None)
+
+        self.queue_vid1 = Gst.ElementFactory.make('queue', "videoqueue")
+        self.queue_vid1.set_property("max-size-buffers",0)
+        self.queue_vid1.set_property("max-size-time",0)
+
         self.pipeline.add(self.queue_vid1)
 
 
         self.demux1 = Gst.ElementFactory.make("tsdemux", "d1")
+        self.demux1.set_property('emit-stats',True)
         self.pipeline.add(self.demux1)
         self.demux1.connect("pad-added", self.on_pad_added, [self.queue_aud1, self.queue_vid1])
 
@@ -419,21 +438,30 @@ class Ingester:
         self.pipeline.add(self.sink_aud1)
 
 
-        self.h264parse1 = Gst.ElementFactory.make('h264parse', None)
-        self.h264parse1.set_property('config-interval', 10)
-        self.pipeline.add(self.h264parse1)
-
         self.mux1 = Gst.ElementFactory.make('matroskamux', None)
         self.pipeline.add(self.mux1)
 
+
+        self.queue_h264 = Gst.ElementFactory.make('queue', None)
+        self.queue_h264.set_property("max-size-buffers",0)
+        self.queue_h264.set_property("max-size-time",0)
+        self.pipeline.add(self.queue_h264)
+        self.h264parse1 = Gst.ElementFactory.make('h264parse', None)
+#        self.h264parse1.set_property('config-interval', 10)
+        #self.h264parse1.connect("pad-added", self.on_pad_added, [self.mux1])
+        self.pipeline.add(self.h264parse1)
+        
+
         # link everything
-        self.src1.link(self.capsFilter1)
+        self.src1.link(self.tsparse)
+        self.tsparse.link(self.capsFilter1)
         self.capsFilter1.link(self.demux1)
         # demuxer is linked dynamically to queue_aud and _vid
         self.queue_aud1.link(self.audiocapsfilter1)
         self.audiocapsfilter1.link(self.sink_aud1)
         self.queue_vid1.link(self.videocapsfilter1)
-        self.videocapsfilter1.link(self.h264parse1)
+        self.videocapsfilter1.link(self.queue_h264)
+        self.queue_h264.link(self.h264parse1)
         self.h264parse1.link(self.mux1)
         self.mux1.link(self.sink_vid1)
         #self.videocapsfilter1.link(self.sink_vid1)
@@ -579,6 +607,9 @@ class Ingester:
 
         with open(caproot + "/" + dirname + "/manifest.xml", "w") as manifest_h:
             manifest_h.write(template)
+
+
+
 
 
 Gst.init(None)
