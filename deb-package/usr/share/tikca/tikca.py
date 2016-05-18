@@ -11,11 +11,17 @@ import csv
 import base64
 from gi.repository import GLib
 from configobj import ConfigObj
+import gi
+gi.require_version('Gst', '1.0')
+from gi.repository import GObject, Gst
+from io import BytesIO as bio
+import pycurl
+import json
 
 os.chdir(os.path.dirname(os.path.realpath(sys.argv[0])))
 
-TIKCONFIG = ConfigObj('/etc/tikca.conf')
-globals()['TIKCONFIG'] = TIKCONFIG
+TIKCFG = ConfigObj('/etc/tikca.conf', list_values=True)
+globals()['TIKCFG'] = TIKCFG
 from grabber import Grabber
 
 from pyca import ca
@@ -40,7 +46,7 @@ CONFIG = ca.CONFIG
 import logging
 # basic config is done in ca.py
 # here, we're adding a file handler
-console = logging.FileHandler(TIKCONFIG['logging']['fn'], mode='a', encoding="UTF-8")
+console = logging.FileHandler(TIKCFG['logging']['fn'], mode='a', encoding="UTF-8")
 console.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s %(levelname)-8s '
                               + '[%(filename)s:%(lineno)s:%(funcName)s()] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -53,7 +59,7 @@ logging.getLogger('').addHandler(console)
 #subdir_nextrecording = "aaaa" # why is that here
 
 class TIKCAcontrol():
-    global TIKCONFIG
+    global TIKCFG
     def __init__(self):
         logging.info("STARTING CONTROL LOOPS...")
         # for episode management
@@ -61,15 +67,15 @@ class TIKCAcontrol():
         self.NEXTEPISODE = None
         self.NEXTPROPS = None
         self.NEXTEVENT = None
-        self.LASTSUBDIR = None
         self.NEXTSUBDIR = None
-        self.NEXTUID = None
+        self.CURSUBDIR = None
+
         self.get_current_recording_data()
         self.tries = 0
         self.ultimatetries = 0
 
         # for udp server
-        self.dest = (TIKCONFIG['udp']['ctrlstation'], int(TIKCONFIG['udp']['sendport']))
+        self.dest = (TIKCFG['udp']['ctrlstation'], int(TIKCFG['udp']['sendport']))
         self.sendsocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sendsocket.connect(self.dest)
         self.block_cmd = False
@@ -78,17 +84,31 @@ class TIKCAcontrol():
 
         #todo: Watchdog für pausierte Recordings - falls seit mehr als n sekunden pausiert, stop und ingest
 
-    def ingestloop(self):
-        # TODO Ingestwatcher bauen
-        # 1. watch over the recordings directory,
-        # 2. get an idea which recordings still have to be ingested
-        # 3. ingest those who need ingesting every n minutes (conf'd in TIKCA)
-        logging.info("ingest")
+    def curlreq(self, url, post_data=None):
+
+        buf = bio()
+        curl = pycurl.Curl()
+        curl.setopt(curl.URL, url.encode('ascii', 'ignore'))
+
+        if post_data:
+            curl.setopt(curl.HTTPPOST, post_data)
+
+        curl.setopt(curl.WRITEFUNCTION, buf.write)
+        curl.perform()
+        status = curl.getinfo(pycurl.HTTP_CODE)
+        curl.close()
+        if int(status / 100) != 2:
+            raise Exception('ERROR: Request to %s failed (HTTP status code %i)' % \
+                            (url, status))
+        result = buf.getvalue()
+
+        buf.close()
+        return result
 
     def udprc_setup(self):
         try:
-            self.udpserver = socketserver.UDPServer(server_address=(TIKCONFIG['udp']['listenhost'],
-                                                                    int(TIKCONFIG['udp']['listenport'])),
+            self.udpserver = socketserver.UDPServer(server_address=(TIKCFG['udp']['listenhost'],
+                                                                    int(TIKCFG['udp']['listenport'])),
                                                     RequestHandlerClass=UDPHandler)
             return True
         except OSError:
@@ -100,29 +120,82 @@ class TIKCAcontrol():
             self.sendsocket.connect(self.dest)
         except:
             logging.error("Cannot connect to UDP CtrlStation (%s:%s)"%
-                          (TIKCONFIG['udp']['ctrlstation'], TIKCONFIG['udp']['sendport']))
+                          (TIKCFG['udp']['ctrlstation'], TIKCFG['udp']['sendport']))
+
+    def get_outlet_state(self, n):
+        if n in range(0, len(TIKCFG['outlet']['hosts'])):
+            if len(TIKCFG['outlet']['users'][n]) > 0:
+                url = "http://%s:%s@%s/statusjsn.js?components=1073741823"%(
+                    TIKCFG['outlet']['users'][n], TIKCFG['outlet']['passwords'][n], TIKCFG['outlet']['hosts'][n])
+            else:
+                url = "http://%s/statusjsn.js?components=1073741823" % (
+                    TIKCFG['outlet']['hosts'][n])
+            #try:
+            jsonstring = self.curlreq(url).decode("UTF-8")
+            jsondata = json.loads(jsonstring)
+            # outlet nr counting from the config file starts with 1,
+            # the json array stars with 0, so we have to compensate:
+            jsonoutletnr = int(TIKCFG['outlet']['outletnrs'][n])-1
+            return(jsondata['outputs'][jsonoutletnr]['state'],
+                   jsondata['outputs'][jsonoutletnr]['name'])
+            #except:
+            #    logging.error("Error reading outlet data under %s"%url)
+            #    return(0)
+
+
+
+    def set_outlet_state(self, n, state):
+        if state in ["0", "1"]:
+            if n in range(0, len(TIKCFG['outlet']['hosts'])):
+                # if there is a user and password set, use them
+                if len(TIKCFG['outlet']['users'][n]) > 0:
+                    url = "http://%s:%s@%s/ov.html?cmd=1&p=%s&s=%s"%(
+                        TIKCFG['outlet']['users'][n], TIKCFG['outlet']['passwords'][n], TIKCFG['outlet']['hosts'][n],
+                        TIKCFG['outlet']['outletnrs'][n], state
+                    )
+                else:
+                # we do not need username and password
+                    url = "http://%s/ov.html?cmd=1&p=%s&s=%s" % (
+                    TIKCFG['outlet']['hosts'][n], int(TIKCFG['outlet']['outletnrs'][n]), state
+                )
+
+            logging.debug("Setting outlet %s to state %s"%(n, state))
+            print(url)
+            self.curlreq(url)
+
+        else:
+            logging.error("Cannot set weird state %s for outlet."%state)
+        pass
 
     def set_lights(self):
         # sets recording/camera light in expected intervals
         global grabber, mycontrol
-        if len(TIKCONFIG['outlet']['host1']) > 7:
-            t = threading.Timer(int(TIKCONFIG['outlet']['update_frequency']), self.set_lights)
-            t.start()
+        if grabber.get_recstatus() == "RECORDING":
+            newstate = "1"
+        else:
+            newstate = "0"
 
-            if grabber.get_recstatus() == "RECORDING":
-                newstat = "1"
-            else:
-                newstat = "0"
+        while True:
+            for n in range (0, len(TIKCFG['outlet']['hosts'])):
+                if len(TIKCFG['outlet']['hosts'][n]) > 2:
+                    (curstate, outletname) = self.get_outlet_state(n)
+                    logging.debug("Current state of outlet %s ('%s'): %s. Should be: %s."%(n, outletname, curstate, newstate))
+                    if not int(curstate) == int(newstate):
+                        self.set_outlet_state(n, newstate)
+            time.sleep(float(TIKCFG['outlet']['update_frequency']))
 
-            #logging.debug("Net outlet update: %s|%s set to %s."
-            #             %(TIKCONFIG['outlet']['host1'], TIKCONFIG['outlet']['reclight1'], newstat))
-            cmd = "snmpset -v2c -mALL -c private %s %s integer %s" %\
-                  (TIKCONFIG['outlet']['host1'], TIKCONFIG['outlet']['reclight1'], newstat)
-            subprocess.call(shlex.split(cmd),stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # http://wiki.gude.info/EPC_HTTP_Interface#Output_switching_.28easy_switching_command.29
 
-            cmd2 = "snmpset -v2c -mALL -c private %s %s integer %s" %\
-                  (TIKCONFIG['outlet']['host2'], TIKCONFIG['outlet']['reclight2'], newstat)
-            subprocess.call(shlex.split(cmd2),stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # old version:
+                #logging.debug("Net outlet update: %s|%s set to %s."
+                #             %(TIKCFG['outlet']['host1'], TIKCFG['outlet']['reclight1'], newstat))
+                #cmd = "snmpset -v2c -mALL -c private %s %s integer %s" %\
+                #      (TIKCFG['outlet']['host1'], TIKCFG['outlet']['reclight1'], newstat)
+                #subprocess.call(shlex.split(cmd),stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                #cmd2 = "snmpset -v2c -mALL -c private %s %s integer %s" %\
+                #      (TIKCFG['outlet']['host2'], TIKCFG['outlet']['reclight2'], newstat)
+                #subprocess.call(shlex.split(cmd2),stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 
@@ -146,30 +219,35 @@ class TIKCAcontrol():
             self.NEXTPROPS = None
             self.NEXTEVENT = None
             self.NEXTSUBDIR = None
-            self.NEXTUID = None
             return (None, None)
 
         nextevent = tmp[0] # in tmp, there is a list of events. [0] is the upcoming one.
 
         delta = nextevent[0] - time.time()
         d_start = datetime.datetime.fromtimestamp(nextevent[0]).strftime('%Y-%m-%d, %H:%M')
-        d_start_wo_year = datetime.datetime.fromtimestamp(nextevent[0]).strftime('%H:%M')
         d_end = datetime.datetime.fromtimestamp(nextevent[1]).strftime('%H:%M')
-        d_dur = str(datetime.timedelta(seconds=delta)) #todo: ordentlich formatieren, außerdem wird die zeit irgendwie geringer während der ansage...
+        d_timeuntil = datetime.timedelta(seconds=delta)
         uid = nextevent[3].get("uid")
 
-        if delta < 0: # RIGHT NOW, there is an event in this room!
+        if delta < 60*3: # RIGHT NOW (or at least in three minutes), there is an event in this room!
             self.ANNOUNCEMENT = "Current event in this room: '%s' (ends at %s)"%\
                                 (nextevent[3].get("SUMMARY"), d_end)
             logging.debug(self.ANNOUNCEMENT)
-            self.NEXTSUBDIR = datetime.datetime.fromtimestamp(nextevent[0]).strftime('%m%d') + "_" + uid
+            self.NEXTSUBDIR = datetime.datetime.fromtimestamp(nextevent[0]).strftime('%Y%m%d') + "_" + uid
+            if not grabber.get_recstatus() in ("RECORDING", "PAUSED", "STARTING", "PAUSING"):
+                self.CURSUBDIR = self.NEXTSUBDIR
+            # We need two variables for that. Because: Image recording A is scheduled from 10:00 till 10:30,
+            # recording B from 10:31 to 11:00. When A takes until 10:35, stuff gets written into B's directory from 10:30 on.
+            # So we make sure that NEXTSUBDIR gets overwritten when there's another recording, CURSUBDIR only gets overwritten
+            # when there's no recording going on *right now*.
+
             self.NEXTEVENT = nextevent
 
             # if a) automatic recordings are True,
             # b) there is nothing being recorded right now and we're not starting the recording right now,
             # c) there is a scheduled recording for this CA: start recording!
             if (grabber.get_recstatus() == "IDLE" or grabber.get_recstatus() == "ERROR")\
-                and TIKCONFIG['capture']['autostart'] == True \
+                and TIKCFG['capture']['autostart'] == True \
                 and not grabber.get_recstatus() == "STARTING":
 
                 logging.debug("Trying to start recording because event is happening and autostart is set to True...")
@@ -186,28 +264,28 @@ class TIKCAcontrol():
                     logging.error("Grabber failed to enter standby mode before recording!")
 
         else:
-            # set up announcement for the next event
-            logging.debug("Next event ('%s', UID %s) occurs from %s to %s. This is in %i seconds."%
-                          (nextevent[3].get("SUMMARY"), uid, d_start_wo_year, d_end, int(delta)))
-            self.ANNOUNCEMENT = "Next event: '%s' at %s."%\
-                            (nextevent[3].get("SUMMARY"), d_start)
-            self.LASTSUBDIR = self.NEXTSUBDIR
-            self.NEXTSUBDIR = None
-
-            # and, if there was a recording going on because of autostart, stop it
-            # TODO FETTES TODO: AUTOSTOP FUNZT NICHT!!!!!!!!!!!!!! (da fehlt ja auch ne zeitliche bedingung)
-            if grabber.get_recstatus() == "RECORDING":
+            # currently, there is no event. Things to do:
+            # 1. Set up announcement for the next event and
+            # 2. set everything ready for unscheduled recordings
+            # 3. stop automatic recordings, if there are any running right now
+            if grabber.get_recstatus() == "RECORDING" and TIKCFG['capture']['autostart'] == True:
                 logging.debug("Stopping autostarted recording...")
                 grabber.record_stop()
                 self.ingest(CONFIG['capture']['directory'] + "/" + self.LASTSUBDIR)
+
+            logging.debug("Next event ('%s', UID %s) occurs from %s to %s. This is in %s."%
+                          (nextevent[3].get("SUMMARY"), uid, d_start, d_end, d_timeuntil))
+            self.ANNOUNCEMENT = "Next event: '%s' at %s."%\
+                            (nextevent[3].get("SUMMARY"), d_start)
+
+            # and, if there was a recording going on because of autostart, stop it
+            # TODO FETTES TODO: AUTOSTOP FUNZT NICHT!!!!!!!!!!!!!! (da fehlt ja auch ne zeitliche bedingung)
 
 
 
         self.NEXTEPISODE = base64.b64decode(str(nextevent[3].get("attach")[0])).decode("utf-8")  # episode.xml
         self.NEXTPROPS = base64.b64decode(str(nextevent[3].get("attach")[1])).decode("utf-8")
-
-#        self.NEXTSUBDIR = datetime.datetime.fromtimestamp(nextevent[0]).strftime('%m%d') + "_" + uid
-        self.NEXTUID = uid
+        grabber.NEXTWFIID = uid
 
         return (self.NEXTEPISODE, self.NEXTPROPS)
 
@@ -217,161 +295,12 @@ class TIKCAcontrol():
             #logging.debug("Sending UDP message: '%s'"%data)
             self.sendsocket.sendall(data.encode("utf-8"))
         except ConnectionRefusedError:
-            logging.error("Cannot send UDP message %s to %s:%s"%(data, TIKCONFIG['udp']['ctrlstation'],
-                                                                int(TIKCONFIG['udp']['sendport'])))
+            logging.error("Cannot send UDP message %s to %s:%s"%(data, TIKCFG['udp']['ctrlstation'],
+                                                                int(TIKCFG['udp']['sendport'])))
 
-    def analyze_stats(self, dirname):
-        # B is for black, P for presentation, C for camera
-        logging.debug("Analyzing directory '%s'"%dirname)
-        fns = []
-        flavors = []
-        try:
-            with open(dirname + "/" + "state.log", 'r') as f:
-                lineslist = [tuple(line) for line in csv.reader(f)]
-                src1list = list(zip(*lineslist))[1]
-                src1_stats = {"B": src1list.count("B"), "C": src1list.count("C"), "P": src1list.count("P")}
-                src1_max = max(src1_stats, key=src1_stats.get)
-                src2list = list(zip(*lineslist))[2]
-                src2_stats = {"B": src2list.count("B"), "C": src2list.count("C"), "P": src2list.count("P")}
-                src2_max = max(src2_stats, key=src2_stats.get)
-
-            logging.debug("Stats for source 1 (B|C|P): \t %s|%s|%s"%
-                          (src1_stats["B"], src1_stats["C"],src1_stats["P"]))
-            logging.debug("Stats for source 2 (B|C|P): \t %s|%s|%s"%
-                          (src2_stats["B"], src2_stats["C"],src2_stats["P"]))
-
-
-
-            # there is room for error: if somebody shows content less than 4 seconds on one stream, it's counted
-            # as empty
-            if src1_stats["C"] + src1_stats["P"] - src1_stats["B"] < 4:
-                src1_flavor = None
-            else:
-                fns.append(dirname + "/" + TIKCONFIG['capture']['src1_fn_vid'])
-                if src1_max == "C":
-                    src1_flavor = "presenter/source"
-                else:   # if max = P or max = B
-                    src1_flavor = "presentation/source"
-
-
-            if src2_stats["C"] + src2_stats["P"] - src2_stats["B"] < 10:
-                src2_flavor = None
-            else:
-                try:
-                    TIKCONFIG['capture']['src2_fn_vid']
-                    fns.append(dirname + "/" + TIKCONFIG['capture']['src2_fn_vid'])
-                    if src2_max == "C":
-                        src2_flavor = "presenter/source"
-                    else:   # if max = P or max = B
-                        src2_flavor = "presentation/source"
-                except KeyError:
-                    logging.debug("No filename for SRC2 set. Ignoring.")
-                    src2_flavor = None
-
-
-            # We cannot have 2x"presenter/source", neither 2x"presentation/source".
-            if src1_flavor == "presenter/source" and src2_flavor == "presenter/source":
-                src2_flavor = "presentation/source"
-            elif src1_flavor == "presentation/source" and src2_flavor == "presentation/source":
-                src2_flavor = "presentation2/source"
-
-            logging.info("Flavor of source 1: '%s'"%src1_flavor)
-            logging.info("Flavor of source 2: '%s'"%src2_flavor)
-            if not src1_flavor == None: flavors.append(src1_flavor)
-            if not src2_flavor == None: flavors.append(src2_flavor)
-
-            # take one sound file: that which has less 'B' marks
-            if src1_stats['C'] + src1_stats['P'] >= src2_stats['C'] + src2_stats['P']:
-                fns.append(dirname + "/" + TIKCONFIG['capture']['src1_fn_aud'])
-            else:
-                try:
-                    TIKCONFIG['capture']['src2_fn_aud']
-                    fns.append(dirname + "/" + TIKCONFIG['capture']['src2_fn_aud'])
-                except KeyError:
-                    # send the SRC1 audio file even if it is "black", so we've got something to send
-                    fns.append(dirname + "/" + TIKCONFIG['capture']['src1_fn_aud'])
-            flavors.append("presenter/source")
-
-
-
-        except FileNotFoundError:
-            logging.error("No log file in directory %s! Using default flavor names."%dirname)
-            try:
-                TIKCONFIG['capture']['src1_fn_aud']
-                TIKCONFIG['capture']['src1_fn_vid']
-                fns.append(dirname + "/" + TIKCONFIG['capture']['src1_fn_aud'])
-                fns.append(dirname + "/" + TIKCONFIG['capture']['src1_fn_vid'])
-                flavors.append(TIKCONFIG['capture']['src1_stdflavor'])
-                flavors.append(TIKCONFIG['capture']['src1_stdflavor'])
-
-            except:
-                logging.error("Error in adding SRC1's flavors/filenames to ingest list!")
-                return list()
-            try:
-                TIKCONFIG['capture']['src2_fn_aud']
-                TIKCONFIG['capture']['src2_fn_vid']
-                fns.append(dirname + "/" + TIKCONFIG['capture']['src2_fn_aud'])
-                fns.append(dirname + "/" + TIKCONFIG['capture']['src2_fn_vid'])
-                flavors.append("presenter/backup")
-                flavors.append(TIKCONFIG['capture']['src2_stdflavor'])
-            except:
-                # we're fine with not having SRC2 defined
-                pass
-
-            logging.debug("File list: %s, %s"%(flavors, fns))
-            # Attention! In Python2 (in which ca.py is programmed), zip() returns a iteratable list.
-            # In Python3 though, this returns an iterator. So we need to fix this by doing list(zip()).
-            return list(zip(flavors, fns))
-
-
-    def get_instance(self, uid):
-
-        url = "https://%s/workflow/instance/%s.json"%(CONFIG['server']['url'], uid)
-        logging.debug(url)
-
-        try:
-            jsonstring = self.http_request(url).decode("UTF-8")
-        except Exception:
-            return False
-
-        jsondata = json.loads(jsonstring)
-        return jsondata['workflow']['mediapackage']['series']
-
-    def ingest(self, subdir):
-        # generate track infos from dir
-
-        logging.info("Analyzing and ingesting dir \"%s\"..."%subdir)
-        tracks = self.analyze_stats(subdir)
-        if len(tracks) > 1:
-            logging.debug("Tracklist returned from analyze step: %s, %s"%(subdir, list(tracks)))
-        else:
-            logging.error("Failed to analyze recording data in %s."%subdir)
-
-        #if not list(tracks) == []:
-        #todo abfragen ob tracks da sind
-        # if there was a scheduled recording, NEXTPROPS and NEXTUID hold details.
-        # if not, they are None
-        if not self.NEXTPROPS == None:
-            wf_def, wf_conf = ca.get_config_params(self.NEXTPROPS)
-            uid = self.NEXTUID
-        else:
-            wf_def = TIKCONFIG['unscheduled']['workflow']
-            wf_conf = ''
-            uid = "Unscheduled-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-
-        logging.debug("PyCA ingest says: %s"%
-                      ca.ingest(tracks, CONFIG['capture']['directory'] + "/" + subdir, uid, wf_def, wf_conf))
-
-        return True
-        #else:
-        #    logging.error("NoTracksFoundError")
-        #    return False
 
     def watch_recstart(self):
         global grabber
-        import gi
-        from gi.repository import GObject, Gst
-        gi.require_version('Gst', '1.0')
         GObject.threads_init()
         Gst.init(None)
         # We're only called when a record should be starting.
@@ -415,33 +344,23 @@ class TIKCAcontrol():
             # todo: set state to error
             self.ultimatetries = 0
 
-    def dfwatch(self):
-        # TODO fertigmachen; außerdem: Tu das beim Start des TIKCA. Außerdem gucken, ob das Verzeichnis überhaupt existiert
-        # print error message and deliver mail if no space left to record
-        statvfs = os.statvfs(CONFIG['capture']['directory'])
-        MB_free = round(statvfs.f_frsize * statvfs.f_bavail/1024/1024)
-        #logging.debug("MB available: %i"%MB_free)
-        if MB_free < 3000:
-            logging.error("LOW SPACE ON HARD DRIVE! ONLY %i MB left!"%MB_free)
-            # todo Mail schicken
-        dfwtimer = threading.Timer(300.0, self.dfwatch)
-        dfwtimer.start()
+
 
     def lengthwatch(self):
         # stop recording when maximum length is reached
-
+        #todo hat noch nicht funktioniert
         if grabber.get_recstatus() == "RECORDING" and grabber.recordingsince != None:
             ts_begin = time.mktime(grabber.recordingsince.timetuple())
             ts_now = time.mktime(datetime.datetime.now().timetuple())
             logging.debug("Recording since %s min (max: %s min)."%
-                          (round((ts_now-ts_begin)/60), TIKCONFIG['capture']['maxduration']))
+                          (round((ts_now-ts_begin)/60), TIKCFG['capture']['maxduration']))
 
-            if ts_now-ts_begin > float(TIKCONFIG['capture']['maxduration'])*60:
+            if ts_now-ts_begin > float(TIKCFG['capture']['maxduration'])*60:
                 grabber.record_stop()
                 ingest_thread = threading.Thread(target=self.ingest, args=(grabber.RECDIR,))
                 ingest_thread.start()
                 logging.error("Stopping the recording since maximum duration of %s min has been reached."
-                              %TIKCONFIG['capture']['maxduration'])
+                              %TIKCFG['capture']['maxduration'])
 
         self.tp = threading.Timer(20.0, self.lengthwatch)
         self.tp.start()
@@ -456,20 +375,20 @@ class TIKCAcontrol():
             return False
 
     def hostcheckloop(self):
-
-        # if we are recording, we suppose that the hosts in question are up
+        # check hosts via ping whether they are up
+        # if we are recording, we suppose that the hosts in question are up, so we're not testing
         if grabber.get_recstatus() != "RECORDING":
-            if len(TIKCONFIG['capture']['src1_adminip']) > 6:
-                logging.debug("Checking whether host %s is up..."%TIKCONFIG['capture']['src1_adminip'])
-                if not (self.hostcheck(TIKCONFIG['capture']['src1_adminip'])):
-                    logging.error("Host %s is down!"%TIKCONFIG['capture']['src1_adminip'])
+            if len(TIKCFG['capture']['src1_adminip']) > 6:
+                logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src1_adminip'])
+                if not (self.hostcheck(TIKCFG['capture']['src1_adminip'])):
+                    logging.error("Host %s is down!"%TIKCFG['capture']['src1_adminip'])
 
             try:
-                TIKCONFIG['capture']['src2_adminip']
-                if len(TIKCONFIG['capture']['src2_adminip']) > 6:
-                    logging.debug("Checking whether host %s is up..."%TIKCONFIG['capture']['src2_adminip'])
-                    if not (self.hostcheck(TIKCONFIG['capture']['src2_adminip'])):
-                        logging.error("Host %s is down!"%TIKCONFIG['capture']['src2_adminip'])
+                TIKCFG['capture']['src2_adminip']
+                if len(TIKCFG['capture']['src2_adminip']) > 6:
+                    logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src2_adminip'])
+                    if not (self.hostcheck(TIKCFG['capture']['src2_adminip'])):
+                        logging.error("Host %s is down!"%TIKCFG['capture']['src2_adminip'])
             except KeyError:
                 pass
         self.tp = threading.Timer(8.0, self.hostcheckloop)
@@ -492,9 +411,9 @@ class UDPHandler(socketserver.BaseRequestHandler):
             return
 
         # make sure only the control station is allowed to speak with us
-        if not self.client_address[0] == TIKCONFIG['udp']['ctrlstation']:
+        if not self.client_address[0] == TIKCFG['udp']['ctrlstation']:
             logging.error("Not processing UDP message from %s: Origin is not %s."%(self.client_address[0],
-                                                                                   TIKCONFIG['udp']['ctrlstation']))
+                                                                                   TIKCFG['udp']['ctrlstation']))
             return
 
         if ":RECORD" in data:
@@ -506,37 +425,41 @@ class UDPHandler(socketserver.BaseRequestHandler):
             if grabber.get_recstatus() == "IDLE" or grabber.get_recstatus() == "ERROR":
                 # try to record
                 # is there a scheduled event? -> make recdir according to scheduling
+                # but only if its a maximum of five minutes before that event.
                 # is there no scheduled event? -> make recdir with unique name
                 # is solved in grabber.setup_recorddir
                 grabber.setup_recorddir(subdir=mycontrol.NEXTSUBDIR, epidata=mycontrol.NEXTEPISODE)
 
+                logging.debug("Creating pipeline in standby...")
                 if grabber.standby():
-                    #grabber.record_start()
+                    logging.debug("Starting recording.")
+                    grabber.record_start()
                     mycontrol.block_cmd = False
-                    self.t = threading.Timer(1.0, mycontrol.watch_recstart) # Diese Version funzt 20160217
-                    self.t.start() # Diese Version funzt 20160217
-
+                    self.t = threading.Timer(0.8, mycontrol.watch_recstart)
+                    self.t.start()
                 else:
                     logging.error("Grabber failed to enter standby mode before recording!")
 
             elif grabber.get_recstatus() == "PAUSED":
-                #grabber.record_start()
-                self.t = threading.Timer(1.0, mycontrol.watch_recstart) # Diese Version funzt 20160217
-                self.t.start() # Diese Version funzt 20160217
-
+                logging.debug("Restarting recording from pause.")
+                grabber.record_start()
+                self.t = threading.Timer(0.8, mycontrol.watch_recstart)
+                self.t.start()
             else:
                 logging.error("Got UDP command to START recording while recording is going on already.")
-
             mycontrol.block_cmd = False
 
         if ":STOP" in data and (grabber.get_recstatus() == "PAUSED" or grabber.get_recstatus() == "RECORDING"):
+            #todo pause -> stop geht irgendwie noch nicht
             mycontrol.block_cmd = True
             logging.debug("Getting UDP command to stop recording")
             if grabber.get_pipestatus() == "capturing":
                 logging.info("Stopping recording")
                 grabber.record_stop()
-                ingest_thread = threading.Thread(target=mycontrol.ingest, args=(grabber.RECDIR,))
-                ingest_thread.start()
+                ingester.write_dirstate(mycontrol.CURSUBDIR, "STOPPED")
+                mycontrol.CURSUBDIR = None
+                #ingest_thread = threading.Thread(target=mycontrol.ingest, args=(grabber.RECDIR,))
+                #ingest_thread.start()
 
             else:
                 logging.error("Got UDP command to STOP recording, but no recording is going on.")
@@ -546,7 +469,6 @@ class UDPHandler(socketserver.BaseRequestHandler):
         if ":PAUSE" in data:
             mycontrol.block_cmd = True
             logging.debug("Getting UDP command to pause recording")
-            #todo pause ist irgendwie borken - macht 0 byte-files
             if grabber.get_pipestatus() == "capturing":
                 grabber.record_pause()
             else:
@@ -557,7 +479,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
             #logging.debug("Received STATE message: %s"%data.strip())
             # write state of Sendeleitung 1 and 2 to file, if recording
             # if not, do nothing
-            grabber.write_states(data.split(" ")[1])
+            grabber.write_line_states(data.split(" ")[1])
             # return state to console
             mycontrol.sendtoctrlstation(":%s\n"%grabber.get_recstatus())
             mycontrol.block_cmd = False
