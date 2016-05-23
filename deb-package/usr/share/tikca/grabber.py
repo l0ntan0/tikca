@@ -317,7 +317,6 @@ class Grabber:
         if status in statlist:
             self.RECSTATE = status
             if self.RECDIR != None:
-                print("tralalala")
                 ingester.write_dirstate(self.RECDIR, "STOPPED")
             return True
         else:

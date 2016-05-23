@@ -80,7 +80,6 @@ class TIKCAcontrol():
         self.sendsocket.connect(self.dest)
         self.block_cmd = False
         self.udpconnectloop()
-        self.set_lights()
 
         #todo: Watchdog für pausierte Recordings - falls seit mehr als n sekunden pausiert, stop und ingest
 
@@ -167,7 +166,7 @@ class TIKCAcontrol():
             logging.error("Cannot set weird state %s for outlet."%state)
         pass
 
-    def set_lights(self):
+    def watch_lights(self):
         # sets recording/camera light in expected intervals
         global grabber, mycontrol
         if grabber.get_recstatus() == "RECORDING":
@@ -346,7 +345,7 @@ class TIKCAcontrol():
 
 
 
-    def lengthwatch(self):
+    def watch_length(self):
         # stop recording when maximum length is reached
         #todo hat noch nicht funktioniert
         if grabber.get_recstatus() == "RECORDING" and grabber.recordingsince != None:
@@ -362,7 +361,7 @@ class TIKCAcontrol():
                 logging.error("Stopping the recording since maximum duration of %s min has been reached."
                               %TIKCFG['capture']['maxduration'])
 
-        self.tp = threading.Timer(20.0, self.lengthwatch)
+        self.tp = threading.Timer(20.0, self.watch_length)
         self.tp.start()
 
     def hostcheck(self, host):
@@ -374,7 +373,7 @@ class TIKCAcontrol():
             logging.debug("Host %s is down!"%str(host))
             return False
 
-    def hostcheckloop(self):
+    def watch_hosts(self):
         # check hosts via ping whether they are up
         # if we are recording, we suppose that the hosts in question are up, so we're not testing
         if grabber.get_recstatus() != "RECORDING":
@@ -391,9 +390,12 @@ class TIKCAcontrol():
                         logging.error("Host %s is down!"%TIKCFG['capture']['src2_adminip'])
             except KeyError:
                 pass
-        self.tp = threading.Timer(8.0, self.hostcheckloop)
+        self.tp = threading.Timer(8.0, self.watch_hosts)
         self.tp.start()
-
+    
+    def watch_freespace(self):
+        self.tp = threading.Timer(8.0, self.watch_freespace)
+        self.tp.start()
 
 
 class UDPHandler(socketserver.BaseRequestHandler):
@@ -409,7 +411,6 @@ class UDPHandler(socketserver.BaseRequestHandler):
         if mycontrol.block_cmd:
             logging.error("Too much for me.")
             return
-
         # make sure only the control station is allowed to speak with us
         if not self.client_address[0] == TIKCFG['udp']['ctrlstation']:
             logging.error("Not processing UDP message from %s: Origin is not %s."%(self.client_address[0],
@@ -504,18 +505,21 @@ if mycontrol.udprc_setup():
 
 
 
-th2 = threading.Thread(target=mycontrol.hostcheckloop)
+th2 = threading.Thread(target=mycontrol.watch_hosts)
 th2.daemon = True
 th2.start()
 
-lw = threading.Thread(target=mycontrol.lengthwatch)
+lw = threading.Thread(target=mycontrol.watch_length)
 lw.daemon = True
 lw.start()
 
-dfw = threading.Thread(target=mycontrol.dfwatch)
+dfw = threading.Thread(target=mycontrol.watch_freespace)
 dfw.daemon = True
 dfw.start()
 
+lw = threading.Thread(target=mycontrol.watch_lights)
+lw.daemon = True
+lw.start()
 
 
 # to run recording:
