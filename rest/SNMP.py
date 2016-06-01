@@ -81,9 +81,20 @@ else:
         )   
     else:
         for name, val in varBinds:
-            print('%s = %s' % (name.prettyPrint(), val.prettyPrint()))     
+            print('%s = %s' % (name.prettyPrint(), val.prettyPrint()))
 
 
-  
-  
-  
+
+
+
+
+            # old version:
+            # logging.debug("Net outlet update: %s|%s set to %s."
+            #             %(TIKCFG['outlet']['host1'], TIKCFG['outlet']['reclight1'], newstat))
+            # cmd = "snmpset -v2c -mALL -c private %s %s integer %s" %\
+            #      (TIKCFG['outlet']['host1'], TIKCFG['outlet']['reclight1'], newstat)
+            # subprocess.call(shlex.split(cmd),stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # cmd2 = "snmpset -v2c -mALL -c private %s %s integer %s" %\
+            #      (TIKCFG['outlet']['host2'], TIKCFG['outlet']['reclight2'], newstat)
+            # subprocess.call(shlex.split(cmd2),stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
