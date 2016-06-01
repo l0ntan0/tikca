@@ -7,5 +7,12 @@
 #
 #fi
 
+if [ ! -d "/var/log/tikca" ]; then
+  install -d -o root -g root -m777 /var/log/tikca
+  touch /var/log/tikca/tikca.log && chmod 666 /var/log/tikca/tikca.log
+fi
+
+python3 -m compileall /usr/share/tikca/tikca.py /usr/share/tikca/tikca > /dev/null
+
 update-rc.d tikca defaults
 service tikca start
