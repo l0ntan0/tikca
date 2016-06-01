@@ -164,6 +164,7 @@ def get_config_params(properties):
     '''
     param = []
     wdef = 'full'
+
     for prop in properties.split('\n'):
         if prop.startswith('org.opencastproject.workflow.config'):
             key, val = prop.split('=', 1)

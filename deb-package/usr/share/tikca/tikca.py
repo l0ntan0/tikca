@@ -185,18 +185,6 @@ class TIKCAcontrol():
 
                 # http://wiki.gude.info/EPC_HTTP_Interface#Output_switching_.28easy_switching_command.29
 
-                # old version:
-                #logging.debug("Net outlet update: %s|%s set to %s."
-                #             %(TIKCFG['outlet']['host1'], TIKCFG['outlet']['reclight1'], newstat))
-                #cmd = "snmpset -v2c -mALL -c private %s %s integer %s" %\
-                #      (TIKCFG['outlet']['host1'], TIKCFG['outlet']['reclight1'], newstat)
-                #subprocess.call(shlex.split(cmd),stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-                #cmd2 = "snmpset -v2c -mALL -c private %s %s integer %s" %\
-                #      (TIKCFG['outlet']['host2'], TIKCFG['outlet']['reclight2'], newstat)
-                #subprocess.call(shlex.split(cmd2),stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
 
     def get_current_recording_data(self):
         # asks server for upcoming recording
@@ -377,24 +365,27 @@ class TIKCAcontrol():
         # check hosts via ping whether they are up
         # if we are recording, we suppose that the hosts in question are up, so we're not testing
         if grabber.get_recstatus() != "RECORDING":
-            if len(TIKCFG['capture']['src1_adminip']) > 6:
-                logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src1_adminip'])
-                if not (self.hostcheck(TIKCFG['capture']['src1_adminip'])):
-                    logging.error("Host %s is down!"%TIKCFG['capture']['src1_adminip'])
+            if len(TIKCFG['capture']['src1_adminhost']) > 6:
+                # if there's an admin host given, ping it
+                logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src1_adminhost'])
+                if not (self.hostcheck(TIKCFG['capture']['src1_adminhost'])):
+                    logging.error("Host %s is down!"%TIKCFG['capture']['src1_adminhost'])
 
             try:
-                TIKCFG['capture']['src2_adminip']
-                if len(TIKCFG['capture']['src2_adminip']) > 6:
-                    logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src2_adminip'])
-                    if not (self.hostcheck(TIKCFG['capture']['src2_adminip'])):
-                        logging.error("Host %s is down!"%TIKCFG['capture']['src2_adminip'])
+                TIKCFG['capture']['src2_adminhost']
+                if len(TIKCFG['capture']['src2_adminhost']) > 6:
+                    logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src2_adminhost'])
+                    if not (self.hostcheck(TIKCFG['capture']['src2_adminhost'])):
+                        logging.error("Host %s is down!"%TIKCFG['capture']['src2_adminhost'])
             except KeyError:
                 pass
-        self.tp = threading.Timer(8.0, self.watch_hosts)
+        self.tp = threading.Timer(float(TIKCFG['watch']['enc_time']), self.watch_hosts)
         self.tp.start()
     
     def watch_freespace(self):
-        self.tp = threading.Timer(8.0, self.watch_freespace)
+        if ingester.df() < float(TIKCFG['watch']['df_space']):
+            logging.error("WARNING: There are less than %s MB available on recording media."%TIKCFG['watch']['df_space'])
+        self.tp = threading.Timer(float(TIKCFG['watch']['df_time']), self.watch_freespace)
         self.tp.start()
 
 
@@ -502,24 +493,32 @@ if mycontrol.udprc_setup():
     th = threading.Thread(target=mycontrol.udpserver.serve_forever)
     th.daemon = True
     th.start()
+else:
+    logging.error("UDP server could not be started.")
 
 
+if TIKCFG['watch']['enc_check']:
+    logging.info("STARTING HOST CHECK...")
+    th2 = threading.Thread(target=mycontrol.watch_hosts)
+    th2.daemon = True
+    th2.start()
 
-th2 = threading.Thread(target=mycontrol.watch_hosts)
-th2.daemon = True
-th2.start()
 
+logging.info("STARTING RECORDING LENGTH WATCH...")
 lw = threading.Thread(target=mycontrol.watch_length)
 lw.daemon = True
 lw.start()
 
+logging.info("STARTING FREE SPACE WATCHDOG...")
 dfw = threading.Thread(target=mycontrol.watch_freespace)
 dfw.daemon = True
 dfw.start()
 
-lw = threading.Thread(target=mycontrol.watch_lights)
-lw.daemon = True
-lw.start()
+if len(TIKCFG['outlet']['hosts'] > 0:
+    logging.info("STARTING OUTLET UPDATE LOOP...")
+    lw = threading.Thread(target=mycontrol.watch_lights)
+    lw.daemon = True
+    lw.start()
 
 
 # to run recording:
