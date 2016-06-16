@@ -36,8 +36,10 @@ class Ingester:
     global TIKCFG
     global CONFIG
     def __init__(self):
-        logging.info("STARTING INGESTER SERVICE...")
-        self.ingestscanloop()
+        logging.info("STARTING INGEST LOOP...")
+        ingthr = threading.Thread(target=self.ingestscanloop)
+        ingthr.daemon = True
+        ingthr.start()
 
 
     def on_pad_added(self, element, src_pad, q):
@@ -164,13 +166,14 @@ class Ingester:
                       TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['stdflavor_audio'],
                       TIKCFG['capture']['src2_fn_aud']: "presenter/backup",
                       TIKCFG['capture']['src2_fn_vid']: TIKCFG['capture']['src1_stdflavor']}
+            for stdfn, stdflv in stdfnsflvs.items():
+                fn = caproot + "/" + dirname + "/" + stdfn
+                logging.debug("Looking for file %s..."%fn)
+                if os.path.isfile(fn):
+                    fns.append(stdfn)
+                    flavors.append(stdflv)
 
-            for tpl in stdfnsflvs:
-                if os.path.isfile(caproot + "/" + dirname + "/" + tpl[0]):
-                    fns.append(tpl[0])
-                    flavors.append(tpl[1])
-
-        logging.debug("File list: %s"%zip(flavors, fns))
+        logging.debug("File list: %s, %s"%(flavors, fns))
 
         with open(caproot + "/" + dirname + "/.ANA", "w") as anafile:
             anafile.write(json.dumps((flavors, fns)))
@@ -205,7 +208,10 @@ class Ingester:
             curl.setopt(curl.NOPROGRESS, False)
             curl.setopt(curl.XFERINFOFUNCTION, self.progress)
         xferstart = datetime.datetime.now()
-        curl.perform()
+        try:
+            curl.perform()
+        except:
+            logging.error("Error communicating with Opencast core.")
         if showprogress:
             logging.info('Transfer duration: {}'.format(datetime.datetime.now() - xferstart))
         status = curl.getinfo(pycurl.HTTP_CODE)
@@ -228,22 +234,29 @@ class Ingester:
         # get instance data from wfiid
         url = "%s/workflow/instance/%s.json"%(CONFIG['server']['url'], wfiid)
         #logging.debug(url)
-        #try:
-        jsonstring = self.curlreq(url).decode("UTF-8")
-        #except Exception:
-        #   return json.loads("{}")
-
-        jsondata = json.loads(jsonstring)
         try:
-            retdict = {'title': jsondata['workflow']['mediapackage']['title'],
-                                    'seriesid': jsondata['workflow']['mediapackage']['series'],
-                                    'duration': round(float(jsondata['workflow']['mediapackage']['duration'])),
-                                    'start': jsondata['workflow']['mediapackage']['start']}
+            jsonstring = self.curlreq(url).decode("UTF-8")
+            jsondata = json.loads(jsonstring)
+            mediapackage = jsondata['workflow']['mediapackage']
+        except Exception:
+            return dict()
+
+
+        retdict = {'title': mediapackage['title']}
+        try:
+            retdict['duration'] = round(float(mediapackage['duration']))
         except KeyError:
-            logging.error("KeyError while fetching %s: %s"%(url, jsondata))
-            retdict = dict()
+            retdict['duration'] = None
+
+        retdict['start'] = mediapackage['start']
+
+        try:
+            retdict['seriesid'] = mediapackage['series']
+            retdict['seriestitle'] = mediapackage['seriestitle']
+        except KeyError:
+            retdict['seriesid'] = retdict['seriestitle'] = None
+
         return retdict
-        # id, title, series, creator,
 
     def zipdir(self, dirname, fns):
         # zip contents of dir to ingest it
@@ -283,9 +296,12 @@ class Ingester:
 
     def get_start_from_dir(self, subdir):
         states = self.read_statefile(subdir)
+        print(states)
         for stateline in states:
-            if stateline[1] == "STARTED":
-                return stateline[0]
+            if len(stateline) > 0:
+                print(stateline)
+                if stateline[1] == "STARTED":
+                    return stateline[0]
 
         return None
 
@@ -294,7 +310,10 @@ class Ingester:
         while True:
             dirlist = []
             for entry in os.listdir(scanroot):
-                if not entry.startswith('.') and not entry == 'lost+found' and os.path.isdir(scanroot + "/" + entry):
+                if not entry.startswith('.') \
+                        and not entry == 'lost+found' \
+                        and not entry == TIKCFG['ingester']['moveto'] \
+                        and os.path.isdir(scanroot + "/" + entry):
                     dirlist.append(entry)
             self.queue = []
 
@@ -302,15 +321,18 @@ class Ingester:
                 # open status of recording in directory
                 logging.info("Scanning dir %s..."%dirtoscan)
                 ls = self.get_last_state(dirtoscan)
+                print(ls)
                 if len(ls) > 1:
                     logging.debug("Last state in %s: %s"%(dirtoscan, ls))
                 else:
-                    logging.info("No directory information here. Putting RECORDED in .RECSTATUS.")
-                    self.write_dirstate(dirtoscan, "RECORDED")
+                    logging.info("No directory information here. Putting STOPPED in .RECSTATUS.")
+                    self.write_dirstate(dirtoscan, "STOPPED")
                     ls = self.get_last_state(dirtoscan)
 
-                print(ls)
-                self.queue.append((dirtoscan, ls[0], ls[1]))
+                try:
+                    self.queue.append((dirtoscan, ls[0], ls[1]))
+                except IndexError:
+                    logging.error("Found dir '%s' with no status information. Ignoring."%dirtoscan)
 
             #logging.debug("Queue is: %s"%self.queue)
             for task in self.queue:
@@ -321,7 +343,7 @@ class Ingester:
                     self.write_dirstate(task[0], "SPLITTING")
                     if self.splitfile(task[0], TIKCFG['capture']['src1_fn_orig'], TIKCFG['capture']['src1_fn_vid'],
                                        TIKCFG['capture']['src1_fn_aud']):
-                        self.write_dirstate(task[0], "SPLIT\tSTREAM1")
+                        self.write_dirstate(task[0], "SPLIT;STREAM1")
                     else:
                         self.write_dirstate(task[0], "ERROR")
 
@@ -329,7 +351,7 @@ class Ingester:
                     if len(TIKCFG['capture']['src2_fn_orig']) > 1:
                         if self.splitfile(task[0], TIKCFG['capture']['src2_fn_orig'],
                                         TIKCFG['capture']['src2_fn_vid'], TIKCFG['capture']['src2_fn_aud']):
-                            self.write_dirstate(task[0], "SPLIT\tSTREAM2")
+                            self.write_dirstate(task[0], "SPLIT;STREAM2")
                             self.write_dirstate(task[0], "SPLITCOMPLETE")
                         else:
                             self.write_dirstate(task[0], "ERROR")
@@ -338,20 +360,36 @@ class Ingester:
                     logging.info("Directory %s contains split files. Starting analyze step."%task[0])
                     self.write_dirstate(task[0], "ANALYZING")
                     flavors, fns = self.analyze_stats(task[0])
+
+                    # get the file length (in seconds)
                     flength = self.get_media_length(task[0], TIKCFG['capture']['src1_fn_orig'])
+                    # sometimes we don't get a file length from the original file.
+                    # The audio file, though, contains a valid length most of the time. So we might as well try.
+                    if flength < 1:
+                        flength = self.get_media_length(task[0], TIKCFG['capture']['src1_fn_aud'])
+
+                    # get the real start time (when did somebody push the play button)
                     start = self.get_start_from_dir(task[0])
-                    if len(fns) > 0 and \
-                        self.write_manifest(dirname=task[0], wfiid=wfiid, duration=flength, start=start, fns=fns, flavors=flavors):
-                        self.write_dirstate(task[0], "ANALYZED")
-                    else:
-                        self.write_dirstate(task[0], "ERROR")
+
+                    # there have to be filenames to write a manifest about, otherwise we're throwing an error
+                    if len(fns) > 0:
+                        ret = self.write_manifest(
+                            dirname=task[0], wfiid=wfiid, duration=flength, start=start, fns=fns, flavors=flavors)
+                        if ret:
+                            self.write_dirstate(task[0], "ANALYZED")
+                        else:
+                            self.write_dirstate(task[0], "ERROR")
+
                 elif task[2] == "ANALYZED":
                     logging.info("Directory %s is analyzed. Starting upload step."%task[0])
                     self.write_dirstate(task[0], "UPLOADING")
                     if not wfiid == None:
                         instancedict = self.get_instancedata(wfiid)
                         print(instancedict)
-                        seriesxml = self.get_seriesdata(instancedict['seriesid'])
+                        try:
+                            seriesxml = self.get_seriesdata(instancedict['seriesid'])
+                        except KeyError:
+                            seriesxml = ""
                         episodexml = self.get_episodedata(wfiid)
                         self.write_seriesxml(task[0], seriesxml)
                         self.write_episodexml(task[0], episodexml)
@@ -376,8 +414,11 @@ class Ingester:
                         self.write_dirstate(task[0], "UPLOADED")
                     else:
                         self.write_dirstate(task[0], "ERROR")
-                    #todo gucken, dass gefailte/gestoppte ingests (zeit liegt zu lange zurück) neu gestartet werden
+
                 elif task[2] == "UPLOADED":
+                    if len(TIKCFG['ingester']['moveto']) > 0:
+                        self.move_ingested(task[0])
+
                     logging.debug("Directory %s has already been ingested, skipping..."%task[0])
                 elif task[2] == "ERROR":
                     step_before_error = self.get_last_state(dirtoscan, -3)
@@ -385,7 +426,10 @@ class Ingester:
                     #todo resume vernünftig einbauen
 
                 elif "ING" in task[2]:
-                    logging.debug("Dir %s has work in progress (%s). Not starting anything new."%(task[0], task[2]))
+                    logging.debug("Dir %s seems to have work in progress (%s since %s). Not starting anything new."%(task[0], task[2], task[1]))
+                    #todo hier:
+                    #todo gucken, dass gefailte/gestoppte ingests (zeit liegt zu lange zurück) neu gestartet werden
+                    # timedelta(task[1], now()) > 60 min
 
             logging.info("Waiting for %s min(s) to scan again."%TIKCFG['ingester']['looptime'])
             time.sleep(float(TIKCFG['ingester']['looptime']) * 60)
@@ -401,6 +445,17 @@ class Ingester:
             param.append((prop['key'], prop['$']))
         return param
 
+    def move_ingested(self, dirname):
+        if not os.path.exists(caproot + "/" + TIKCFG['ingester']['moveto']):
+            try:
+                os.makedirs(caproot + "/" + TIKCFG['ingester']['moveto'])
+            except:
+                logging.error("Could not create directory for already ingested files.")
+                return False
+        if os.rename(caproot + "/" + dirname,
+                     caproot + "/" + TIKCFG['ingester']['moveto'] + "/" + dirname):
+            logging.info("Moved dir '%s' to directory for already ingested files."%dirname)
+            return True
 
     def get_agentprops(self, wfiid):
 
@@ -634,7 +689,7 @@ class Ingester:
         # append a status file into the directory dirname
 
         if status in ["ERROR", "STARTED", "PAUSED", "STOPPED",
-                      "SPLITTING", "SPLIT", "SPLITCOMPLETE", "SPLIT\tSTREAM1", "SPLIT\tSTREAM2",
+                      "SPLITTING", "SPLIT", "SPLITCOMPLETE", "SPLIT;STREAM1", "SPLIT;STREAM2",
                       "ANALYZING", "ANALYZED",
                       "MANIFESTING", "MANIFESTED",
                       "ZIPPING", "ZIPPED",
@@ -642,7 +697,7 @@ class Ingester:
             now = datetime.datetime.utcnow().replace(microsecond=0)
             try:
                 with open(caproot + "/" + dirname + "/.RECSTATE", "a+") as f:
-                    f.write(now.strftime("%Y-%m-%dT%H:%M:%SZ") + "\t" + status + "\n")
+                    f.write(now.strftime("%Y-%m-%dT%H:%M:%SZ") + ";" + status + "\n")
                     logging.debug("Wrote status %s into %s"%(status, dirname))
             except:
                 logging.error("Could not write state %s in dir %s."%(status, dirname))
@@ -656,10 +711,10 @@ class Ingester:
         fn = caproot + "/" + dirname + "/.RECSTATE"
         try:
             with open(fn, 'r') as f:
-                content = [x.strip('\n').split("\t") for x in f]
+                content = [x.strip('\n').split(";") for x in f]
                 return content
-        except:
-            logging.error("No status file found in %s"%dirname)
+        except FileNotFoundError:
+            logging.error("No status file found in '%s'."%dirname)
             return []
 
     def get_last_state(self, dirname, n=-1):
@@ -776,13 +831,8 @@ class Ingester:
 
 Gst.init(None)
 GObject.threads_init()
-ing = Ingester()
-#print(ing.get_media_length("/srv/recordings/test1", "stream1.mpegts"))
-#ing.zipdir("test1", "src1.mkv")
-#ing.ingestscanloop()
-#ing.splitfile("/srv/recordings/test1", "stream1.mpegts", "src1.mkv", "src1.aac")
-#ing.write_manifest("/srv/recordings/test1", "aaaaa", "12343435", "2016-04-12T09:30:00Z", ("src1.aac", "src1.mkv", "src2.mkv"), ("presenter-audio/source", "presenter/source", "presentation/source"))
-#ing.ingestscanloop()
+
+
 
 def testfilecatcher(id, dir):
     testdir = dir

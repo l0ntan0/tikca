@@ -23,6 +23,7 @@ os.chdir(os.path.dirname(os.path.realpath(sys.argv[0])))
 TIKCFG = ConfigObj('/etc/tikca.conf', list_values=True)
 globals()['TIKCFG'] = TIKCFG
 from grabber import Grabber
+from ingester import Ingester
 
 from pyca import ca
 CONFIG = ca.CONFIG
@@ -129,17 +130,17 @@ class TIKCAcontrol():
             else:
                 url = "http://%s/statusjsn.js?components=1073741823" % (
                     TIKCFG['outlet']['hosts'][n])
-            #try:
-            jsonstring = self.curlreq(url).decode("UTF-8")
-            jsondata = json.loads(jsonstring)
+            try:
+                jsonstring = self.curlreq(url).decode("UTF-8")
+                jsondata = json.loads(jsonstring)
             # outlet nr counting from the config file starts with 1,
             # the json array stars with 0, so we have to compensate:
-            jsonoutletnr = int(TIKCFG['outlet']['outletnrs'][n])-1
-            return(jsondata['outputs'][jsonoutletnr]['state'],
-                   jsondata['outputs'][jsonoutletnr]['name'])
-            #except:
-            #    logging.error("Error reading outlet data under %s"%url)
-            #    return(0)
+                jsonoutletnr = int(TIKCFG['outlet']['outletnrs'][n])-1
+                return(jsondata['outputs'][jsonoutletnr]['state'],
+                       jsondata['outputs'][jsonoutletnr]['name'])
+            except:
+                    logging.error("Error reading outlet data under %s"%url)
+                    return(0, None)
 
 
 
@@ -178,9 +179,10 @@ class TIKCAcontrol():
             for n in range (0, len(TIKCFG['outlet']['hosts'])):
                 if len(TIKCFG['outlet']['hosts'][n]) > 2:
                     (curstate, outletname) = self.get_outlet_state(n)
-                    logging.debug("Current state of outlet %s ('%s'): %s. Should be: %s."%(n, outletname, curstate, newstate))
-                    if not int(curstate) == int(newstate):
-                        self.set_outlet_state(n, newstate)
+                    if not outletname == None:
+                        logging.debug("Current state of outlet %s ('%s'): %s. Should be: %s."%(n, outletname, curstate, newstate))
+                        if not int(curstate) == int(newstate):
+                            self.set_outlet_state(n, newstate)
             time.sleep(float(TIKCFG['outlet']['update_frequency']))
 
                 # http://wiki.gude.info/EPC_HTTP_Interface#Output_switching_.28easy_switching_command.29
@@ -383,6 +385,7 @@ class TIKCAcontrol():
         self.tp.start()
     
     def watch_freespace(self):
+        global ingester
         if ingester.df() < float(TIKCFG['watch']['df_space']):
             logging.error("WARNING: There are less than %s MB available on recording media."%TIKCFG['watch']['df_space'])
         self.tp = threading.Timer(float(TIKCFG['watch']['df_time']), self.watch_freespace)
@@ -392,7 +395,7 @@ class TIKCAcontrol():
 class UDPHandler(socketserver.BaseRequestHandler):
 
     def handle(self):
-        global grabber, mycontrol
+        global grabber, mycontrol, ingester
 
         data = self.request[0]
         socket = self.request[1]
@@ -448,6 +451,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
             if grabber.get_pipestatus() == "capturing":
                 logging.info("Stopping recording")
                 grabber.record_stop()
+
                 ingester.write_dirstate(mycontrol.CURSUBDIR, "STOPPED")
                 mycontrol.CURSUBDIR = None
                 #ingest_thread = threading.Thread(target=mycontrol.ingest, args=(grabber.RECDIR,))
@@ -509,12 +513,14 @@ lw = threading.Thread(target=mycontrol.watch_length)
 lw.daemon = True
 lw.start()
 
+ingester = Ingester()
+
 logging.info("STARTING FREE SPACE WATCHDOG...")
 dfw = threading.Thread(target=mycontrol.watch_freespace)
 dfw.daemon = True
 dfw.start()
 
-if len(TIKCFG['outlet']['hosts'] > 0:
+if len(TIKCFG['outlet']['hosts']) > 0:
     logging.info("STARTING OUTLET UPDATE LOOP...")
     lw = threading.Thread(target=mycontrol.watch_lights)
     lw.daemon = True
