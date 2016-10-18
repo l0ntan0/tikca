@@ -5,29 +5,32 @@ from configobj import ConfigObj
 import datetime
 import threading
 from gi.repository import GObject, Gst
+import argparse
 gi.require_version('Gst', '1.0')
 GObject.threads_init()
 Gst.init(None)
 import sys
-from pyca import ca
 import logging
 from ingester import Ingester
 
 
+
 os.chdir(os.path.dirname(os.path.realpath(sys.argv[0])))
 #TODO: Check whether config files are there, and maybe include option to give config files in command line
+parser = argparse.ArgumentParser()
+parser.add_argument("--tikcacfg", help="the tikca configfile", default='/etc/tikca.conf')
+args = parser.parse_args()
 
-CONFIG = ca.update_configuration('/etc/pyca.conf')
-TIKCFG = ConfigObj('/etc/tikca.conf', list_values=True)
+#print(args.tikcacfg)
+TIKCFG = ConfigObj(args.tikcacfg, list_values=True)
 ingester = Ingester()
 
 class Grabber:
     global TIKCFG
-    global CONFIG
     def __init__(self):
-        logging.info("STARTING TIKCA")
+        logging.info("STARTING TIKCA-GRABBER")
         self.stoprequest = threading.Event()
-        self.RECDIR = "."
+        self.RECDIR = None
         self.retrycount = 0
         self.recordingsince = None
         self.set_recstatus("IDLE")
@@ -51,13 +54,14 @@ class Grabber:
 
     def standby(self):
         logging.debug("Setting up pipeline")
-        # TODO: only do this if state != playing
+        # todo: only do this when state != playing or starting
         # Key to happiness for demuxing one stream:
         # gst-launch-1.0 -e udpsrc uri=udp://239.25.1.34:4444 ! video/mpegts, systemstream=\(boolean\)true, packetsize=\(int\)188 !
         # tsdemux name=d ! queue ! video/x-h264 ! filesink location="out.h264" d. ! queue ! audio/mpeg, mpegversion=\(int\)2,
         # stream-format=\(string\)adts ! filesink location="out.aac"
 
-        wholequeue1 = "matroskamux name='muxer' ! filesink location='%s' sync=false udpsrc uri='%s' multicast-iface=%s ! 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188' ! tsdemux name=dem ! queue ! video/x-h264 ! h264parse !  muxer. dem. ! queue ! audio/mpeg ! aacparse ! muxer."%(fn_vid1, TIKCFG['capture']['src1_uri'], TIKCFG['capture']['src1_iface'])
+        #fn_stream1 = self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']
+        #wholequeue1 = "matroskamux name='muxer' ! filesink location='%s' sync=false udpsrc uri='%s' multicast-iface=%s ! 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188' ! tsdemux name=dem ! queue ! video/x-h264 ! h264parse !  muxer. dem. ! queue ! audio/mpeg ! aacparse ! muxer."%(fn_stream1, TIKCFG['capture']['src1_uri'], TIKCFG['capture']['src1_iface'])
         
         prot_src1 = TIKCFG['capture']['src1_uri'].split("://")[0]
         if prot_src1 == "udp":
@@ -65,35 +69,63 @@ class Grabber:
             self.src1 = Gst.ElementFactory.make('udpsrc', "udpsrc1")
             self.src1.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
             self.src1.set_property('buffer-size', 0)
-            if len(TIKCFG['capture']['src1_uri']) > 15:
+            if len(TIKCFG['capture']['src1_uri']) > 4:
                 self.src1.set_property('uri', TIKCFG['capture']['src1_uri'])
             else:
                 self.src1.set_property('port', int(TIKCFG['capture']['src1_uri'].split("@")[-1]))
-
             self.pipeline.add(self.src1)
 
             self.sink_vid1 = Gst.ElementFactory.make('filesink', None)
-            self.sink_vid1.set_property('location', self.RECDIR + "/" + TIKCFG['capture']['src1_fn_vid'])
-#            self.sink_vid1.set_property('sync', False)
+            self.sink_vid1.set_property('location', self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig'])
             self.pipeline.add(self.sink_vid1)
-           
             self.src1.link(self.sink_vid1)
-        
-        else:
-            logging.error("Unsupported protocol for SRC1!")
-            #return False
+
+        elif prot_src1 == "rtsp":
+            # set up elements: src -> caps -> demux -> caps -> sinks
+            self.src1 = Gst.ElementFactory.make('rtspsrc', "rtspsrc1")
+            self.depay1 = Gst.ElementFactory.make('rtph264depay', "depay")
+            self.src1.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
+            self.src1.set_property('latency', 0)
+            self.src1.set_property('location', TIKCFG['capture']['src1_uri'])
+            self.pipeline.add(self.src1)
+            self.pipeline.add(self.depay1)
+            #self.pipeline.add(self.queue1)
+            self.src1.link(self.depay1)
+
+            self.sink_vid1 = Gst.ElementFactory.make('filesink', None)
+            self.sink_vid1.set_property('location', self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig'])
+            self.pipeline.add(self.sink_vid1)
+
+            self.depay1.link(self.sink_vid1)
+
+
 
         try:
             TIKCFG['capture']['src2_uri']
-            
-            wholequeue2 = "matroskamux name='muxer' ! filesink location='%s' sync=false udpsrc uri='%s' multicast-iface=%s ! 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188' ! tsdemux name=dem ! queue ! video/x-h264 ! h264parse !  muxer. dem. ! queue ! audio/mpeg ! aacparse ! muxer."%(fn_vid2, TIKCFG['capture']['src2_uri'], TIKCFG['capture']['src2_iface'])
+            prot_src2 = TIKCFG['capture']['src2_uri'].split("://")[0]
+            if prot_src2 == "udp":
 
-            self.src2 = Gst.ElementFactory.make('udpsrc', "udpsrc2")
-            self.src2.set_property('uri', TIKCFG['capture']['src2_uri'])
-            self.src2.set_property('buffer-size', 0)
-            self.src2.set_property('multicast-iface', TIKCFG['capture']['src2_iface'])
+            #fn_stream2 = self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig']
+            #wholequeue2 = "matroskamux name='muxer' ! filesink location='%s' sync=false udpsrc uri='%s' multicast-iface=%s ! 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188' ! tsdemux name=dem ! queue ! video/x-h264 ! h264parse !  muxer. dem. ! queue ! audio/mpeg ! aacparse ! muxer."%(fn_stream2, TIKCFG['capture']['src2_uri'], TIKCFG['capture']['src2_iface'])
 
-            self.pipeline.add(self.src2)
+                self.src2 = Gst.ElementFactory.make('udpsrc', "udpsrc2")
+                self.src2.set_property('uri', TIKCFG['capture']['src2_uri'])
+                self.src2.set_property('buffer-size', 0)
+                self.src2.set_property('multicast-iface', TIKCFG['capture']['src2_iface'])
+                if len(TIKCFG['capture']['src2_uri']) > 4:
+                    self.src2.set_property('uri', TIKCFG['capture']['src2_uri'])
+                else:
+                    self.src2.set_property('port', int(TIKCFG['capture']['src2_uri'].split("@")[-1]))
+
+                self.pipeline.add(self.src2)
+
+            elif prot_src2 == "rtsp":
+                # set up elements: src -> caps -> demux -> caps -> sinks
+                self.src2 = Gst.ElementFactory.make('rtspsrc', "rtspsrc2")
+                self.src2.set_property('multicast-iface', TIKCFG['capture']['src2_iface'])
+                self.src2.set_property('latency', 0)
+                self.src2.set_property('location', TIKCFG['capture']['src2_uri'])
+                self.pipeline.add(self.src2)
 
             self.sink_vid2 = Gst.ElementFactory.make('filesink', None)
             self.sink_vid2.set_property('location', self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig'])
@@ -116,17 +148,17 @@ class Grabber:
         logging.debug("Pads added: %s"%(name))
 
 
-        if name.startswith("application/x-rtp, media=(string)video"):
-            sink_pad = q[1].get_static_pad('sink')
-            src_pad.link(sink_pad)
-            logging.debug("Video queue pad linked (RTP): %s"%sink_pad)
+        #if name.startswith("application/x-rtp, media=(string)video"):
+        #    sink_pad = q[1].get_static_pad('sink')
+        #    src_pad.link(sink_pad)
+        #    logging.debug("Video queue pad linked (RTP): %s"%sink_pad)
 
-        elif name.startswith("application/x-rtp, media=(string)audio"):
-            sink_pad = q[0].get_static_pad('sink')
-            src_pad.link(sink_pad)
-            logging.debug("Audio queue pad linked (RTP): %s"%sink_pad)
+        #elif name.startswith("application/x-rtp, media=(string)audio"):
+        #    sink_pad = q[0].get_static_pad('sink')
+        #    src_pad.link(sink_pad)
+        #    logging.debug("Audio queue pad linked (RTP): %s"%sink_pad)
 
-        elif name.startswith("video/x-h264"):
+        if name.startswith("video/x-h264"):
             sink_pad = q[1].get_static_pad('sink')
             src_pad.link(sink_pad)
             logging.debug("Video queue pad linked (MPEGTS): %s"%sink_pad)
@@ -139,7 +171,6 @@ class Grabber:
     def checkstarted(self):
         logging.info("Checking whether recording has started or not...")
 
-        #print(os.path.getsize(self.RECDIR + "/" + TIKCFG['capture']['src2_fn_vid']))
         if os.path.getsize(self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']) == 0:
             logging.error("File size does not change. Restarting pipeline...")
             self.retrycount += 1
@@ -150,10 +181,9 @@ class Grabber:
             restarttimer.start()
         else:
             logging.info("Recording started, pipeline is running. Everything is fine.")
-            if self.get_pipestatus() == "capturing":
-                self.set_recstatus("RECORDING")
-                self.set_ocstatus("capturing")
-                self.recordingsince = datetime.datetime.now()
+            self.set_recstatus("RECORDING")
+            self.set_ocstatus("capturing")
+            self.recordingsince = datetime.datetime.now()
 
 
     def record_start(self):
@@ -199,9 +229,7 @@ class Grabber:
             self.OCSTATE = "capturing"
             return True"""
 
-    def record_stop(self, eos = True):
-        #import inspect
-        #logging.debug(inspect.stack()[1][3])
+    def record_stop(self, eos=True):
         logging.info("Stopping pipeline...")
         self.set_recstatus("STOPPING")
 
@@ -210,9 +238,8 @@ class Grabber:
             self.pipeline.send_event(Gst.Event.new_eos())
 
             # waits for the message that EOS is written - "hangs" on purpose!
-            logging.debug("Waiting for EOS")
-            b = self.bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE, Gst.MessageType.ERROR | Gst.MessageType.EOS)
-
+            logging.debug("Waiting 5 s for EOS")
+            b = self.bus.timed_pop_filtered(5*1000*1000*1000, Gst.MessageType.ERROR | Gst.MessageType.EOS)
             logging.debug("EOS written")
 
         logging.debug("GST says: %s"%self.pipeline.set_state(Gst.State.NULL))
@@ -262,21 +289,23 @@ class Grabber:
         # otherwise, it's just date and "Unscheduled"
         if subdir == None:
             # create subdir from date and time
-            self.RECDIR = CONFIG['capture']['directory'] + "/" + datetime.datetime.now().strftime("Unscheduled_%Y%m%d_%H%M%S")
+            self.RECDIR = TIKCFG['capture']['directory'] + "/" + datetime.datetime.now().strftime("Unscheduled_%Y%m%d_%H%M%S")
         else:
-            self.RECDIR = CONFIG['capture']['directory'] + "/" + subdir
+            self.RECDIR = TIKCFG['capture']['directory'] + "/" + subdir + datetime.datetime.now().strftime("_%Y%m%d_%H%M%S")
 
         logging.debug("Trying to create recording directory '%s'..."%self.RECDIR)
         try:
             os.makedirs(self.RECDIR)
-            logging.debug("Creating RecDir: Success.")
+            logging.debug("Creating RecDir '%s': Success."%self.RECDIR)
         except FileExistsError:
-            self.RECDIR = self.RECDIR + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.RECDIR = self.RECDIR + str(time.time()).split(".")[1]
             logging.info("Recording dir already exists. Generating unique dirname '%s'."%self.RECDIR)
             try:
                 os.makedirs(self.RECDIR)
             except:
-                logging.error("Could not create dir %s!"%self.RECDIR)
+                logging.error("Could not create dir %s! Check write permissions! Setting up dir in /tmp instead."%self.RECDIR)
+                self.RECDIR = "/tmp/" + self.RECDIR
+                os.makedirs(self.RECDIR)
 
         # save episode.xml
         if not epidata == None:
@@ -285,7 +314,7 @@ class Grabber:
                 f.write(epidata)
                 logging.debug("Writing episode.xml...")
             #TODO Das muss aber drin bleiben
-            ingester.write_dirstate(mycontrol.CURSUBDIR, "WFIID\t%s"%self.WFIID)
+            ingester.write_dirstate(self.RECDIR, "WFIID\t%s"%self.WFIID)
 
         # save recording.properties
         if not props == None:
@@ -304,12 +333,13 @@ class Grabber:
                         (datetime.datetime.now().strftime("%Y%m%d%H%M%S"), statestr[0], statestr[1]))
 
     def set_ocstatus(self, status):
-        statlist = ["idle", "uploading", "capturing", "error"]
+        statlist = ["idle", "capturing", "error", "manifest", "uploading", "upload_finished"]
         if status in statlist:
             self.OCSTATE = status
+            ingester.set_oc_castate(status)
             return True
         else:
-            logging.debug("OC state %s cannot be set"%status)
+            logging.debug("OC state '%s' does not exist and will not be set."%status)
             return False
 
     def set_recstatus(self, status):
@@ -317,10 +347,10 @@ class Grabber:
         if status in statlist:
             self.RECSTATE = status
             if self.RECDIR != None:
-                ingester.write_dirstate(self.RECDIR, "STOPPED")
+                ingester.write_dirstate(self.RECDIR, status)
             return True
         else:
-            logging.debug("Record state %s cannot be set"%status)
+            logging.debug("Record state '%s' cannot be set."%status)
             return False
 
     def get_ocstatus(self):

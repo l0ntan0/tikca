@@ -15,4 +15,4 @@ fi
 python3 -m compileall /usr/share/tikca/tikca.py /usr/share/tikca/tikca > /dev/null
 
 update-rc.d tikca defaults
-service tikca start
+#service tikca start

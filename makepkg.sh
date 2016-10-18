@@ -1,3 +1,5 @@
+rm ./deb-package/usr/share/tikca/*.log
+rm -r ./deb-package/usr/share/tikca/__pycache*
 dpkg-deb --build deb-package
 mv deb-package.deb TIKCA_v2.deb
 cp TIKCA_v2.deb ~/debs/amd64
