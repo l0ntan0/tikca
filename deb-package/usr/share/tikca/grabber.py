@@ -1,9 +1,11 @@
 #!/usr/bin/python3
+
 import gi
 import os
 from configobj import ConfigObj
 import datetime
 import threading
+import time
 from gi.repository import GObject, Gst
 import argparse
 gi.require_version('Gst', '1.0')
@@ -35,24 +37,24 @@ class Grabber:
         self.recordingsince = None
         self.set_recstatus("IDLE")
         self.set_ocstatus("idle")
-        self.WFIID = None
-        self.init_pipe()
+        self.NEXTWFIID = None
         
         logging.info("Grabber initialized")
 
     def init_pipe(self):
         # Create GStreamer pipeline
         # TODO: only do this if state != playing
-        logging.debug("Creating GStreamer Pipeline")
-        self.pipeline = Gst.Pipeline()
+        #logging.debug("Creating GStreamer Pipeline")
+        #self.pipeline = Gst.Pipeline()
 
         # Create bus to get events from GStreamer pipeline
-        self.bus = self.pipeline.get_bus()
+        #self.bus = self.pipeline.get_bus()
 
-        self.bus.add_signal_watch()
-        self.bus.connect('message::pad_added', self.on_pad_added)
+        #self.bus.add_signal_watch()
+        #self.bus.connect('message::pad_added', self.on_pad_added)
+        return True
 
-    def standby(self):
+    def pipe_create(self):
         logging.debug("Setting up pipeline")
         # todo: only do this when state != playing or starting
         # Key to happiness for demuxing one stream:
@@ -60,80 +62,47 @@ class Grabber:
         # tsdemux name=d ! queue ! video/x-h264 ! filesink location="out.h264" d. ! queue ! audio/mpeg, mpegversion=\(int\)2,
         # stream-format=\(string\)adts ! filesink location="out.aac"
 
-        #fn_stream1 = self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']
-        #wholequeue1 = "matroskamux name='muxer' ! filesink location='%s' sync=false udpsrc uri='%s' multicast-iface=%s ! 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188' ! tsdemux name=dem ! queue ! video/x-h264 ! h264parse !  muxer. dem. ! queue ! audio/mpeg ! aacparse ! muxer."%(fn_stream1, TIKCFG['capture']['src1_uri'], TIKCFG['capture']['src1_iface'])
-        
         prot_src1 = TIKCFG['capture']['src1_uri'].split("://")[0]
         if prot_src1 == "udp":
-            # set up elements: src -> caps -> demux -> caps -> sinks
-            self.src1 = Gst.ElementFactory.make('udpsrc', "udpsrc1")
-            self.src1.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
-            self.src1.set_property('buffer-size', 0)
-            if len(TIKCFG['capture']['src1_uri']) > 4:
-                self.src1.set_property('uri', TIKCFG['capture']['src1_uri'])
-            else:
-                self.src1.set_property('port', int(TIKCFG['capture']['src1_uri'].split("@")[-1]))
-            self.pipeline.add(self.src1)
+            self.pipe1 = Gst.parse_launch("udpsrc uri=%s ! filesink location=%s"%
+                                          (TIKCFG['capture']['src1_uri'],
+                                           self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']))
+            # 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188'
+            self.bus1 = self.pipe1.get_bus()
+            self.bus1.add_signal_watch()
+            #self.bus1.connect('message::error', self.on_error)
 
-            self.sink_vid1 = Gst.ElementFactory.make('filesink', None)
-            self.sink_vid1.set_property('location', self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig'])
-            self.pipeline.add(self.sink_vid1)
-            self.src1.link(self.sink_vid1)
+            #self.bus1.enable_sync_message_emission()
+            #self.bus1.connect('sync-message::element', self.on_sync_message)
 
-        elif prot_src1 == "rtsp":
-            # set up elements: src -> caps -> demux -> caps -> sinks
-            self.src1 = Gst.ElementFactory.make('rtspsrc', "rtspsrc1")
-            self.depay1 = Gst.ElementFactory.make('rtph264depay', "depay")
-            self.src1.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
-            self.src1.set_property('latency', 0)
-            self.src1.set_property('location', TIKCFG['capture']['src1_uri'])
-            self.pipeline.add(self.src1)
-            self.pipeline.add(self.depay1)
-            #self.pipeline.add(self.queue1)
-            self.src1.link(self.depay1)
+            #todo evtl das hier wieder rein?
+            #self.src1 = Gst.ElementFactory.make('udpsrc', "udpsrc1")
+            #self.src1.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
+            #self.src1.set_property('buffer-size', 0)
 
-            self.sink_vid1 = Gst.ElementFactory.make('filesink', None)
-            self.sink_vid1.set_property('location', self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig'])
-            self.pipeline.add(self.sink_vid1)
-
-            self.depay1.link(self.sink_vid1)
-
+            # todo rtsp support wieder rein
 
 
         try:
+            # is there a second stream defined?
             TIKCFG['capture']['src2_uri']
             prot_src2 = TIKCFG['capture']['src2_uri'].split("://")[0]
             if prot_src2 == "udp":
+                self.pipe2 = Gst.parse_launch("udpsrc uri=%s ! filesink location=%s" %
+                                              (TIKCFG['capture']['src2_uri'],
+                                               self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig']))
+                # 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188'
+                self.bus2 = self.pipe2.get_bus()
+                self.bus2.add_signal_watch()
+                #self.bus2.connect('message::error', self.on_error)
 
-            #fn_stream2 = self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig']
-            #wholequeue2 = "matroskamux name='muxer' ! filesink location='%s' sync=false udpsrc uri='%s' multicast-iface=%s ! 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188' ! tsdemux name=dem ! queue ! video/x-h264 ! h264parse !  muxer. dem. ! queue ! audio/mpeg ! aacparse ! muxer."%(fn_stream2, TIKCFG['capture']['src2_uri'], TIKCFG['capture']['src2_iface'])
+                # self.bus2.enable_sync_message_emission()
+                # self.bus2.connect('sync-message::element', self.on_sync_message)
 
-                self.src2 = Gst.ElementFactory.make('udpsrc', "udpsrc2")
-                self.src2.set_property('uri', TIKCFG['capture']['src2_uri'])
-                self.src2.set_property('buffer-size', 0)
-                self.src2.set_property('multicast-iface', TIKCFG['capture']['src2_iface'])
-                if len(TIKCFG['capture']['src2_uri']) > 4:
-                    self.src2.set_property('uri', TIKCFG['capture']['src2_uri'])
-                else:
-                    self.src2.set_property('port', int(TIKCFG['capture']['src2_uri'].split("@")[-1]))
-
-                self.pipeline.add(self.src2)
-
-            elif prot_src2 == "rtsp":
-                # set up elements: src -> caps -> demux -> caps -> sinks
-                self.src2 = Gst.ElementFactory.make('rtspsrc', "rtspsrc2")
-                self.src2.set_property('multicast-iface', TIKCFG['capture']['src2_iface'])
-                self.src2.set_property('latency', 0)
-                self.src2.set_property('location', TIKCFG['capture']['src2_uri'])
-                self.pipeline.add(self.src2)
-
-            self.sink_vid2 = Gst.ElementFactory.make('filesink', None)
-            self.sink_vid2.set_property('location', self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig'])
- #           self.sink_vid2.set_property('sync', False)
-            self.pipeline.add(self.sink_vid2)
-
-            self.src2.link(self.sink_vid2)
-
+                # todo evtl das hier wieder rein?
+                # self.src2 = Gst.ElementFactory.make('udpsrc', "udpsrc1")
+                # self.src2.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
+                # self.src2.set_property('buffer-size', 0)
         except KeyError:
             logging.debug("No SRC2 defined. Setting up pipeline only for SRC1.")
 
@@ -142,7 +111,7 @@ class Grabber:
     def on_pad_added(self, element, src_pad, q):
         # needed because the demuxer has dynamically added pads
         # here, the pads are selected due to the naming/content
-
+        logging.debug("Pads added called!")
         caps = src_pad.query_caps(None)
         name = caps.to_string()
         logging.debug("Pads added: %s"%(name))
@@ -170,14 +139,25 @@ class Grabber:
 
     def checkstarted(self):
         logging.info("Checking whether recording has started or not...")
-
-        if os.path.getsize(self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']) == 0:
+        if self.get_recstatus() == "PAUSED" or self.get_recstatus() == "STOPPED" or self.get_recstatus() == "STOPPING":
+            logging.info("Record is paused/stopped, not checking file length etc. - avoiding race condition")
+            return True
+        #fs1 = os.path.getsize(self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig'])
+        #time.sleep(2)
+        #if os.path.getsize(self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']) == fs1:
+        #todo: if needed, reimplement
+        if False:
             logging.error("File size does not change. Restarting pipeline...")
             self.retrycount += 1
-            del self.pipeline
-            self.init_pipe()
-            self.standby()
-            restarttimer = threading.Timer(4.0, self.record_start)
+            del self.pipe1
+            try:
+                del self.pipe2
+            except:
+                pass
+
+            self.pipe_create()
+
+            restarttimer = threading.Timer(1.0, self.record_start)
             restarttimer.start()
         else:
             logging.info("Recording started, pipeline is running. Everything is fine.")
@@ -187,71 +167,70 @@ class Grabber:
 
 
     def record_start(self):
-        logging.info("Starting pipeline...")
-        self.pipeline.set_state(Gst.State.PLAYING)
-        self.set_recstatus("STARTING")
+        logging.info("Starting pipelines...")
+        # restart pipeline if we're paused
+        if self.get_pipestatus() == "paused":
+            logging.info("Restarting from pause")
+            logging.debug("Starting pipe1")
+            self.pipe1.set_state(Gst.State.PLAYING)
+            try:
+                logging.debug("Starting pipe2")
+                self.pipe2.set_state(Gst.State.PLAYING)
+            except:
+                logging.debug("No pipe2 defined")
+            self.set_recstatus("RECORDING")
 
-        if self.retrycount < int(TIKCFG['capture']['retry']):
-            failtimer = threading.Timer(4.0, self.checkstarted)
-            failtimer.start()
+            return True
+
         else:
-            self.set_recstatus("ERROR")
-            self.set_ocstatus("idle")
-            logging.debug("Maximum retry count! Not trying to record anymore.")
-            self.retrycount = 0
+            # start new pipeline if there's a new recording
+            if self.pipe_create():
+                logging.debug("Pipe(s) created. Setting pipeline(s) to PLAYING.")
+                self.pipe1.set_state(Gst.State.PLAYING)
+                try:
+                    self.pipe2.set_state(Gst.State.PLAYING)
+                except:
+                    logging.debug("No pipe2 defined, skipping...")
+
+                logging.info("Recording started, pipeline is running. Everything is fine.")
+                self.set_recstatus("RECORDING")
+                self.set_ocstatus("capturing")
+
+                self.recordingsince = datetime.datetime.now()
 
 
 
-        """while self.pipeline.get_state(False)[1] == Gst.State.PAUSED \
-                and self.retrycount < int(TIKCFG['capture']['retry']):
-            logging.error("Pipeline didn't start. Retrying (%i of %i)..."%
-                          (self.retrycount, int(TIKCFG['capture']['retry'])))
-            self.retrycount += 1
-            #del self.pipeline
-            logging.info("Pipeline stopped and removed.")
-            self.init_pipe()
-            #time.sleep(1)
-            self.standby()
-            #time.sleep(1)
-            logging.info("Starting pipeline...")
-            self.pipeline.set_state(Gst.State.PLAYING)
-            #time.sleep(int(TIKCFG['capture']['retrywait']))
-
-        if self.retrycount >= int(TIKCFG['capture']['retry']):
-            logging.error("START OF PIPELINE FAILED! CRITICAL ERROR!")
-            self.RECSTATE = "ERROR"
-            del self.pipeline
-            return False
-
-        elif self.pipeline.get_state(False)[1] == Gst.State.PLAYING:
-            logging.info("Pipeline started for real - RECORDING!")
-            self.RECSTATE = "RECORDING"
-            self.OCSTATE = "capturing"
-            return True"""
-
-    def record_stop(self, eos=True):
+    def record_stop(self, eos=False):
         logging.info("Stopping pipeline...")
         self.set_recstatus("STOPPING")
 
         # send EOS to make files complete
         if eos:
-            self.pipeline.send_event(Gst.Event.new_eos())
+            try:
+                self.pipe1.send_event(Gst.Event.new_eos())
+                self.pipe2.send_event(Gst.Event.new_eos())
+            except:
+                pass
 
             # waits for the message that EOS is written - "hangs" on purpose!
             logging.debug("Waiting 5 s for EOS")
-            b = self.bus.timed_pop_filtered(5*1000*1000*1000, Gst.MessageType.ERROR | Gst.MessageType.EOS)
+            b = self.bus1.timed_pop_filtered(5*1000*1000*1000, Gst.MessageType.ERROR | Gst.MessageType.EOS)
             logging.debug("EOS written")
 
-        logging.debug("GST says: %s"%self.pipeline.set_state(Gst.State.NULL))
+        try:
+            logging.debug("GST pipe1 says: %s" % self.pipe1.set_state(Gst.State.NULL))
+            logging.debug("GST pipe2 says: %s" % self.pipe2.set_state(Gst.State.NULL))
+            del self.pipe1
+            del self.pipe2
+        except:
+            pass
 
+        self.set_recstatus("STOPPED")
         self.set_recstatus("IDLE")
         self.set_ocstatus("idle")
-        del self.pipeline
+
         logging.info("Pipeline stopped and removed.")
 
-        self.init_pipe()
-        self.retrycount = 0
-        self.set_recstatus("STOPPED")
 
         logging.debug("List and length of files in recording dir '%s':"%self.RECDIR)
         fns = os.listdir(self.RECDIR)
@@ -264,23 +243,28 @@ class Grabber:
     def record_pause(self):
         logging.info("Pausing pipeline...")
         self.set_recstatus("PAUSING")
-        logging.debug("GST says: %s"%self.pipeline.set_state(Gst.State.PAUSED))
-        #todo wait for GST to pause
+        logging.debug("GST pipe1 says: %s" % self.pipe1.set_state(Gst.State.PAUSED))
+        try:
+            logging.debug("GST pipe2 says: %s" % self.pipe2.set_state(Gst.State.PAUSED))
+        except:
+            logging.debug("no pipe2 defined")
         self.set_recstatus("PAUSED")
         logging.info("Pipeline paused.")
 
-    def quit(self, window):
-        self.pipeline.set_state(Gst.State.NULL)
 
 
     def get_pipestatus(self):
-        curstate = self.pipeline.get_state(False)[1]
-        logging.debug("GST was asked for pipe status. Answer: %s"%curstate)
-        if curstate == Gst.State.PLAYING:
-            return "capturing"
-        elif curstate == Gst.State.PAUSED:
-            return "paused"
-        else:
+        try:
+            curstate = self.pipe1.get_state(False)[1]
+            logging.debug("GST was asked for pipe status. Answer: %s"%curstate)
+            if curstate == Gst.State.PLAYING:
+                return "capturing"
+            elif curstate == Gst.State.PAUSED:
+                return "paused"
+            else:
+                return "stopped"
+        except:
+            logging.debug("There is no pipeline to be asked for status.")
             return "stopped"
 
     def setup_recorddir(self, subdir=None, epidata=None, props=None):
@@ -298,7 +282,7 @@ class Grabber:
             os.makedirs(self.RECDIR)
             logging.debug("Creating RecDir '%s': Success."%self.RECDIR)
         except FileExistsError:
-            self.RECDIR = self.RECDIR + str(time.time()).split(".")[1]
+            self.RECDIR = self.RECDIR + "_" + str(time.time()).split(".")[1]
             logging.info("Recording dir already exists. Generating unique dirname '%s'."%self.RECDIR)
             try:
                 os.makedirs(self.RECDIR)
@@ -309,12 +293,11 @@ class Grabber:
 
         # save episode.xml
         if not epidata == None:
-            #TODO das muss noch raus
             with open(self.RECDIR + "/" + "episode.xml", "w") as f:
                 f.write(epidata)
                 logging.debug("Writing episode.xml...")
             #TODO Das muss aber drin bleiben
-            ingester.write_dirstate(self.RECDIR, "WFIID\t%s"%self.WFIID)
+            ingester.write_dirstate(self.RECDIR, "WFIID\t%s"%self.NEXTWFIID)
 
         # save recording.properties
         if not props == None:
@@ -385,73 +368,6 @@ class Grabber:
 # gst-launch-1.0 -e rtspsrc location=rtsp://172.25.111.3/ssm/video1 latency=0 name=demux demux. ! queue ! rtph264depay  ! h264parse !  mp4mux name=mux ! filesink location=video.out demux. ! queue ! rtpmp4gdepay ! aacparse ! mux.
 
 
-a = """
-    def record_setup_DEPRECATED(self, subdir, fake=False):
-        # this is deprecated!
-        logging.debug("Making pipeline...")
-        if fake:
-            logging.info("Setting up FAKE sources...")
-            self.src1 = Gst.ElementFactory.make('videotestsrc', None)
-            self.src2 = Gst.ElementFactory.make('videotestsrc', None)
-            self.caps = Gst.caps_from_string('video/x-raw, width=640, height=480')
-
-        else:
-
-            self.src1 = Gst.ElementFactory.make('udpsrc', None)
-            logging.info("Setting up source %s"%TIKCFG['capture']['src1_uri'])
-            self.src1.set_property('uri', TIKCFG['capture']['src1_uri'])
-            #self.src1.set_property('multicast-group', TIKCFG['capture']['SOURCEIP1'])
-            #self.src1.set_property('port', int(TIKCFG['capture']['SOURCEPORT1']))
-            self.src1.set_property('multicast-iface', "eth0")
-
-            self.src2 = Gst.ElementFactory.make('udpsrc', None)
-            logging.info("Setting up source %s"%TIKCFG['capture']['src2_uri'])
-            self.src2.set_property('uri', TIKCFG['capture']['src2_uri'])
-            #self.src2.set_property('multicast-group', TIKCFG['capture']['SOURCEIP2'])
-            #self.src2.set_property('port', int(TIKCFG['capture']['SOURCEPORT2']))
-            self.src2.set_property('multicast-iface', "eth0")
-
-            self.caps = Gst.caps_from_string('video/mpegts, systemstream=(boolean)true, packetsize=(int)188')
-
-
-
-        self.pipeline.add(self.src1)
-        self.pipeline.add(self.src2)
-
-        self.capsFilter1 = Gst.ElementFactory.make("capsfilter", None)
-        self.capsFilter1.props.caps = self.caps
-        self.capsFilter2 = Gst.ElementFactory.make("capsfilter", None)
-        self.capsFilter2.props.caps = self.caps
-
-        self.pipeline.add(self.capsFilter1)
-        self.pipeline.add(self.capsFilter2)
-
-
-        self.setup_recorddir(subdir)
-
-        fn1 = self.RECDIR + "/" + TIKCFG['capture']['src1_outfile']
-        fn2 = self.RECDIR + "/" + TIKCFG['capture']['src2_outfile']
-
-        logging.debug("Creating file sinks...")
-        self.sink1 = Gst.ElementFactory.make('filesink', None)
-        self.sink1.set_property('location', fn1)
-        self.sink2 = Gst.ElementFactory.make('filesink', None)
-        self.sink2.set_property('location', fn2)
-        self.pipeline.add(self.sink1)
-        self.pipeline.add(self.sink2)
-
-        logging.debug("Linking pipeline...")
-        self.src1.link(self.capsFilter1)
-        self.src2.link(self.capsFilter2)
-
-        saveformat = "mts"
-        if saveformat == "mts":
-            self.capsFilter1.link(self.sink1)
-            self.capsFilter2.link(self.sink2)
-
-        logging.debug("Done setting up pipeline.")
-        return True
-          """
 
 #Kamera:
 #gst-launch-1.0 -e rtspsrc location=rtsp://172.25.111.3/video1 latency=0 name=demux demux. ! queue ! rtph264depay  ! h264parse !  mp4mux name=mux ! filesink location=video.out demux. ! queue ! rtpmp4gdepay ! aacparse ! audio/aac !  mux.
