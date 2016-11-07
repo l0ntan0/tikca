@@ -21,5 +21,10 @@ if [ ! -f /var/log/tikca_comm.log ]; then
 fi
 chown matterhorn /var/log/tikca_comm.log
 
+if [ ! -f /var/log/tikca_ingest.log ]; then
+        touch /var/log/tikca_ingest.log
+fi
+chown matterhorn /var/log/tikca_ingest.log
+
 exit 0
 

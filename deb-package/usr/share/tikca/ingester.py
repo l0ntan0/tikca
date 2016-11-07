@@ -29,49 +29,42 @@ args = parser.parse_args()
 TIKCFG = ConfigObj(args.tikcacfg, list_values=True)
 caproot = TIKCFG['capture']['directory']
 
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG,
+                        format='%(asctime)s %(levelname)-8s '
+                               + '[%(filename)s:%(lineno)s:%(funcName)s()] %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S')
+
+    console = logging.FileHandler(TIKCFG['logging']['ingestfn'], mode='a', encoding="UTF-8")
+    console.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s %(levelname)-8s '
+                                  + '[%(filename)s:%(lineno)s:%(funcName)s()] %(message)s',
+                                  datefmt='%Y-%m-%d %H:%M:%S')
+    # tell the handler to use this format
+    console.setFormatter(formatter)
+    # add the handler to the root logger
+    logging.getLogger('').addHandler(console)
+
 class Ingester:
     global TIKCFG
+    global caproot
     def __init__(self):
-        if TIKCFG['ingester']['autoingest'] == True:
+        if TIKCFG['ingester']['autoingest'] == True \
+                or __name__ == "__main__":
             logging.info("STARTING INGEST LOOP...")
             ingthr = threading.Thread(target=self.ingestscanloop)
-            ingthr.daemon = True
+            #ingthr.daemon = True
             ingthr.start()
 
 
-    def on_pad_added(self, element, src_pad, q):
-        # needed because the demuxer has dynamically added pads
-        # here, the pads are selected due to the naming/content
-
-
-        logging.debug("input element %s"%element)
-        caps = src_pad.query_caps(None)
-        name = caps.to_string()
-        logging.debug("Pads added: %s"%(name))
-
-        if name.startswith("application/x-rtp, media=(string)video"):
-            sink_pad = q[1].get_static_pad('sink')
-            src_pad.link(sink_pad)
-            logging.debug("Video queue pad linked (RTP): %s"%sink_pad)
-
-        elif name.startswith("application/x-rtp, media=(string)audio"):
-            sink_pad = q[0].get_static_pad('sink')
-            src_pad.link(sink_pad)
-            logging.debug("Audio queue pad linked (RTP): %s"%sink_pad)
-
-        elif name.startswith("video/x-h264"):
-            sink_pad = q[1].get_static_pad('sink')
-            src_pad.link(sink_pad)
-            logging.debug("Video queue pad linked (MPEGTS): %s"%sink_pad)
-
-        elif name.startswith("audio/mpeg"):
-            sink_pad = q[0].get_static_pad('sink')
-            src_pad.link(sink_pad)
-            logging.debug("Audio queue pad linked (MPEGTS): %s"%sink_pad)
-
     def get_media_length(self, dirname, fn):
-        comm = "%s -i %s -print_format json -show_streams"%(TIKCFG['ingester']['probe'], caproot + "/" + dirname + "/" + fn)
-        logging.debug(comm)
+        if TIKCFG['ingester']['probe'] == "ffprobe":
+            comm = "%s -i %s -print_format json -show_streams" % (
+            TIKCFG['ingester']['probe'], caproot + "/" + dirname + "/" + fn)
+        elif TIKCFG['ingester']['probe'] == "avprobe":
+            comm = "%s -show_format -of json -show_streams %s" % (
+            TIKCFG['ingester']['probe'], caproot + "/" + dirname + "/" + fn)
+
         args = shlex.split(comm)
         with subprocess.Popen(args,stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as p:
             jsondata = json.loads(p.stdout.read().decode("UTF-8"))
@@ -171,12 +164,16 @@ class Ingester:
 
         except FileNotFoundError:
             logging.error("No stream log file in directory '%s'! Using default flavor names."%dirname)
+            try:
+                stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['src1_stdflavor'],
+                          TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['stdflavor_audio'],
+                          TIKCFG['capture']['src2_fn_aud']: "presenter/backup",
+                          TIKCFG['capture']['src2_fn_vid']: TIKCFG['capture']['src1_stdflavor']}
+            except KeyError:
+                stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['src1_stdflavor'],
+                              TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['stdflavor_audio']}
 
-            stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['src1_stdflavor'],
-                      TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['stdflavor_audio'],
-                      TIKCFG['capture']['src2_fn_aud']: "presenter/backup",
-                      TIKCFG['capture']['src2_fn_vid']: TIKCFG['capture']['src1_stdflavor']}
-            for stdfn, stdflv in stdfnsflvs.items():
+                for stdfn, stdflv in stdfnsflvs.items():
                 fn = caproot + "/" + dirname + "/" + stdfn
                 logging.debug("Looking for file %s..."%fn)
                 if os.path.isfile(fn):
@@ -191,11 +188,6 @@ class Ingester:
             anafile.write(json.dumps((flavors, fns)))
 
         return (flavors, fns)
-
-            # OLD STUFF
-            # Attention! In Python2 (in which ca.py is programmed), zip() returns a iteratable list.
-            # In Python3 though, this returns an iterator. So we need to fix this by doing list(zip()).
-            # return list(zip(flavors, fns))
 
     def curlreq(self, url, post_data=None, ocmode=True, showprogress=False):
 
@@ -216,8 +208,12 @@ class Ingester:
         if showprogress:
             self.progress_called = 0
             logging.debug("Showing progress of upload...")
-            curl.setopt(curl.NOPROGRESS, False)
-            curl.setopt(curl.XFERINFOFUNCTION, self.progress)
+
+            try:
+                curl.setopt(curl.NOPROGRESS, False)
+                curl.setopt(curl.XFERINFOFUNCTION, self.progress)
+            except:
+                pass
         xferstart = datetime.datetime.now()
         #try:
         # todo fetch all kinds of errors in a good way
@@ -304,20 +300,49 @@ class Ingester:
 
     def get_wfiid_from_dir(self, subdir):
         states = self.read_statefile(subdir)
-        if states[0][1] == "WFIID":
-            logging.debug("Found WFIID %s in dir %s"%(states[0][2], subdir))
-            return states[0][2]
-        else:
+        try:
+            pot_wfiid = states[0][1].split("\t")[1]
+            if not pot_wfiid == "None":
+                logging.debug("Found WFIID %s in dir %s"%(pot_wfiid, subdir))
+                return pot_wfiid
+        except:
+            logging.debug("Did not find WFIID in dir %s. First line reads '%s'" % (subdir, states[0]))
             return None
 
+    def get_start_from_episodexml(self, subdir):
+        try:
+            with open(caproot + '/' + subdir + '/episode.xml', 'r') as f:
+                episode = f.read()
+            theline = episode.split("start=")[1]
+            ts = theline.split(";")[0]
+            if len(ts) > 0:
+                return date
+            else:
+                logging.info("Did not get a valid date from '%s/episode.xml'. Returning button-press-date instead."%subdir)
+                return self.get_start_from_dir(subdir)
+        except:
+            logging.info("Did not get a valid date from '%s/episode.xml'. Returning button-press-date instead."%subdir)
+            return self.get_start_from_dir(subdir)
+
     def get_start_from_dir(self, subdir):
+        # get tuples from statefile like "['2016-11-04T12:01:33Z', 'STOPPED']"
         states = self.read_statefile(subdir)
         for stateline in states:
             if len(stateline) > 0:
-                if stateline[1] == "STARTED":
+                if stateline[1] == "RECORDING":
                     return stateline[0]
 
-        return None
+        logging.debug("Found no valid start time for recording in %s."%subdir)
+        return "1970-01-01T00:00:00Z"
+
+    def get_stop_from_dir(self, subdir):
+        states = self.read_statefile(subdir)
+        for stateline in states:
+            if len(stateline) > 0:
+                if stateline[1] == "STOPPED":
+                    return stateline[0]
+
+        return "1970-01-01T01:00:00Z"
 
     def ingestscanloop(self, scanroot = caproot):
         # list dirs
@@ -340,21 +365,19 @@ class Ingester:
                 if len(ls) > 1:
                     logging.debug("Last state in '%s': '%s'"%(dirtoscan, ls))
                 else:
-                    logging.info("No directory information here. Putting STOPPED in .RECSTATUS so we can go on.")
-                    self.write_dirstate(dirtoscan, "STOPPED")
-                    ls = self.get_last_state(dirtoscan)
+                    logging.info("No directory information here. Maybe this is no directory for us - leaving.")
 
                 try:
                     self.queue.append((dirtoscan, ls[0], ls[1]))
                 except IndexError:
-                    logging.error("Found dir '%s' with no status information. Ignoring."%dirtoscan)
+                    logging.error("Found dir '%s' with no status information. Ignoring." % dirtoscan)
 
             #logging.debug("Queue is: %s"%self.queue)
             for task in self.queue:
                 wfiid = self.get_wfiid_from_dir(task[0])
                 if "ING" in task[2]:
                     logging.debug("Dir '%s' seems to have work in progress ('%s' since %s). Not starting anything new."%(task[0], task[2], task[1]))
-                    #todo hier:
+
                     #todo gucken, dass gefailte/gestoppte ingests (zeit liegt zu lange zurück) neu gestartet werden
                     # timedelta(task[1], now()) > 60 min
 
@@ -362,20 +385,32 @@ class Ingester:
                     logging.info("Directory %s contains recorded files. Starting split step."%task[0])
                     # todo: in einen extrathread packen
                     self.write_dirstate(task[0], "SPLITTING")
-                    if self.splitfile(task[0], TIKCFG['capture']['src1_fn_orig'], TIKCFG['capture']['src1_fn_vid'],
+                    if self.splitfile_new(task[0], TIKCFG['capture']['src1_fn_orig'], TIKCFG['capture']['src1_fn_vid'],
                                        TIKCFG['capture']['src1_fn_aud']):
                         self.write_dirstate(task[0], "SPLIT;STREAM1")
+                        errstate = False
                     else:
                         self.write_dirstate(task[0], "ERROR")
+                        errstate = True
 
                     # only attempt to split the second file if there is a name defined
-                    if len(TIKCFG['capture']['src2_fn_orig']) > 1:
-                        if self.splitfile(task[0], TIKCFG['capture']['src2_fn_orig'],
+                    try:
+                        TIKCFG['capture']['src2_fn_orig']
+
+                        if self.splitfile_new(task[0], TIKCFG['capture']['src2_fn_orig'],
                                         TIKCFG['capture']['src2_fn_vid'], TIKCFG['capture']['src2_fn_aud']):
                             self.write_dirstate(task[0], "SPLIT;STREAM2")
-                            self.write_dirstate(task[0], "SPLITCOMPLETE")
+                            errstate = False
                         else:
                             self.write_dirstate(task[0], "ERROR")
+                            errstate = True
+                    except:
+                        logging.info("This is a single stream recorder. Not trying to split second stream.")
+
+                    if errstate == False:
+                        self.write_dirstate(task[0], "SPLITCOMPLETE")
+
+
 
                 elif task[2] == "SPLITCOMPLETE":
                     logging.info("Directory %s contains split files. Starting analyze step."%task[0])
@@ -389,15 +424,18 @@ class Ingester:
                     if flength < 1:
                         flength = self.get_media_length(task[0], TIKCFG['capture']['src1_fn_aud'])
 
-                    # get the real start time ("when did somebody push the play button?")
-                    start = self.get_start_from_dir(task[0])
+                    # Note: We are not getting the real start time ("when did somebody push the play button?"), but
+                    # the start time from the episode.xml. If you wanna change this behaviour, this is the line:
+                    # start = self.get_start_from_dir(task[0])
+                    start = self.get_start_from_episodexml(task[0])
 
                     # there have to be filenames to write a manifest about, otherwise we're throwing an error
                     # todo: potential error if we do not have a wfiid, right...?
                     if len(fns) > 0:
                         self.set_oc_recstate("manifest", wfiid)
                         ret = self.write_manifest(
-                            dirname=task[0], wfiid=wfiid, duration=flength, start=start, fns=fns, flavors=flavors)
+                            dirname=task[0], wfiid=wfiid, duration=flength, start=start, fns=fns, flavors=flavors
+                        )
                         if ret:
                             self.write_dirstate(task[0], "ANALYZED")
                         else:
@@ -406,6 +444,9 @@ class Ingester:
                         logging.error("Did not find any files in dir '%s'"%task[0])
                         self.write_dirstate(task[0], "ERROR")
 
+
+
+
                 elif task[2] == "ANALYZED":
                     logging.info("Directory %s is analyzed. Starting upload step."%task[0])
                     self.write_dirstate(task[0], "UPLOADING")
@@ -413,17 +454,45 @@ class Ingester:
                         instancedict = self.get_instancedata(wfiid)
                         try:
                             seriesxml = self.get_seriesdata(instancedict['seriesid'])
+
                         except KeyError:
                             seriesxml = ""
+
+                        self.write_seriesxml(task[0], seriesxml)
+
                         try:
                             episodexml = self.get_episodedata(wfiid)
+                            self.write_episodexml(task[0], episodexml)
                         except KeyError:
-                            episodexml = ""
-                        self.write_seriesxml(task[0], seriesxml)
-                        self.write_episodexml(task[0], episodexml)
+                            logging.error("No episode data. what shall i do? klappt ads hier, wenn es keine episode gibt?")
+
+
                     else:
-                        #todo was tut er denn, wenn er keine wfiid hat?
-                        pass
+                        # this seems to be an unscheduled recording. We will be treating it as such:
+                        try:
+                            self.write_seriesxml(task[0], self.get_seriesdata(TIKCFG['unscheduled']['serid']))
+                        except:
+                            logging.error("Cannot get series data for unscheduled recordings. Not doing anything for this directory.")
+                            return False
+
+                        # read episode template
+                        with open('episode_template.xml', 'r') as f:
+                            epitemp = f.read()
+
+                        startdate = self.get_start_from_dir(task[0])
+                        stopdate = self.get_stop_from_dir(task[0])
+                        caname = TIKCFG['agent']['name']
+
+                        # replace values with something we can identify
+                        epitemp = epitemp.replace("___CREATOR___", "Unknown Creator")
+                        epitemp = epitemp.replace("___SERID___", TIKCFG['unscheduled']['serid'])
+                        epitemp = epitemp.replace("___START___", startdate)
+                        epitemp = epitemp.replace("___END___", stopdate)
+                        epitemp = epitemp.replace("___TITLE___", "Unscheduled recording from CA %s"%caname)
+                        epitemp = epitemp.replace("___CANAME___", caname)
+
+                        self.write_episodexml(task[0], epitemp)
+                        logging.info("Writing episode data for unscheduled recording...")
 
                     # read results of analyze-step to get file names etc.
                     with open(caproot + "/" + task[0] + "/.ANA", "r") as anafile:
@@ -456,8 +525,8 @@ class Ingester:
                     logging.debug("Directory %s has already been ingested, skipping..."%task[0])
                 elif task[2] == "ERROR":
                     step_before_error = self.get_last_state(dirtoscan, -3)
-                    logging.info("Found dir %s in an error state. Resuming from step '%s'."%(task[0], step_before_error))
-                    #todo resume vernünftig einbauen
+                    logging.info("Found dir %s in an error state after '%s'."%(task[0], step_before_error))
+
 
 
 
@@ -524,8 +593,7 @@ class Ingester:
 
     def set_oc_recstate(self, state, recid):
         # Set status of recording (not the same as status of CA, see set_oc_castate)
-        if state in ("capturing", "manifest", "upload", "upload_finished") \
-                and len(recid) > 1:
+        if state in ("capturing", "manifest", "upload", "upload_finished") and not recid == None:
             postdata = [('state', state)]
             url = "%s/capture-admin/recordings/%s"%(TIKCFG['server']['url'], recid)
             try:
@@ -539,10 +607,12 @@ class Ingester:
             return False
 
 
-    def ingest(self, fns, flavors, subdir, wfiid, wfdef=TIKCFG['unscheduled']['workflow']):
+    def ingest(self, fns, flavors, subdir, wfiid=None, wfdef=TIKCFG['unscheduled']['workflow']):
     # this code snippet is mostly stolen from Lars Kiesow's pyCA.
 
-        self.set_oc_recstate("upload", wfiid)
+        if not wfiid == None:
+            self.set_oc_recstate("upload", wfiid)
+
         logging.info('Creating new mediapackage')
         mediapackage = self.curlreq('%s/ingest/createMediaPackage'%TIKCFG['server']['url'])
         logging.debug("Mediapackage creation answer: %s"%mediapackage.decode("UTF-8"))
@@ -585,23 +655,39 @@ class Ingester:
             else:
                 logging.error("The file '%s' does not exist. I am not uploading it."%fullfn)
 
-        # ingest
-        wfdef, wfcfg = self.get_agentprops(wfiid)
 
-        logging.info('Finishing ingest by writing mediapackage and workflow config')
-        fields = [('mediaPackage', mediapackage),
-                  ('workflowDefinitionId', wfdef),
-                  ('workflowInstanceId', wfiid.encode('ascii', 'ignore'))]
-        fields += wfcfg
 
-        mediapackage = self.curlreq('%s/ingest/ingest'%TIKCFG['server']['url'], fields)
-        logging.info("Writing mediapackage info into directory...")
-        with open(recording_dir + "/mediapackage.xml", "w") as f:
-            f.write(mediapackage.decode('utf-8'))
-        logging.info("Finished ingest of WFIID %s (dir '%s')"%(wfiid, subdir))
+        # ingest if WFIID is set (i. e. scheduled recordings):
+        if not wfiid == None:
+            wfdef, wfcfg = self.get_agentprops(wfiid)
 
-        # Finally, communicate with OC server and tell it that the uploading process is finished.
-        self.set_oc_recstate("upload_finished", wfiid)
+            logging.info('Finishing ingest by writing mediapackage and workflow config')
+            fields = [('mediaPackage', mediapackage),
+                      ('workflowDefinitionId', wfdef),
+                      ('workflowInstanceId', wfiid.encode('ascii', 'ignore'))]
+            fields += wfcfg
+
+            mediapackage = self.curlreq('%s/ingest/ingest'%TIKCFG['server']['url'], fields)
+            logging.info("Writing mediapackage info into directory...")
+            with open(recording_dir + "/mediapackage.xml", "w") as f:
+                f.write(mediapackage.decode('utf-8'))
+            logging.info("Finished ingest of WFIID %s (dir '%s')"%(wfiid, subdir))
+            # Finally, communicate with OC server and tell it that the uploading process is finished.
+            self.set_oc_recstate("upload_finished", wfiid)
+
+        # ingest if WFIID is not set (unscheduled recordings):
+        else:
+            wfdef = TIKCFG['unscheduled']['workflow']
+            fields = [('mediaPackage', mediapackage),
+                      ('workflowDefinitionId', wfdef)]
+
+            mediapackage = self.curlreq('%s/ingest/ingest' % TIKCFG['server']['url'], fields)
+            logging.info("Writing mediapackage info into directory...")
+            with open(recording_dir + "/mediapackage.xml", "w") as f:
+                f.write(mediapackage.decode('utf-8'))
+            logging.info("Finished ingest of unscheduled recording from '%s')" % (subdir))
+
+
 
         return True
 
@@ -612,111 +698,40 @@ class Ingester:
         #logging.debug("MB available: %i"%MB_free)
         return MB_free
 
-    def splitfile(self, dirname, infile, of_vid, of_aud):
+    def splitfile_new(self, dirname, infile, of_vid, of_aud):
         # split mpegts streams into parts
 
         if not os.path.isfile(caproot + "/" + dirname + "/" + infile):
             logging.error("Error while splitting file: File does not exist ('%s')"%(caproot + "/" + dirname + "/" + infile))
             return False
+
         fsize = os.path.getsize(caproot + "/" + dirname + "/" + infile)
-
-        if self.df() < 1.5*fsize/1024/1024:
-            logging.error("Not enough disk space! (%s MB free, %s MB needed)"%(self.df(), fsize/1024/1024))
+        if fsize < 640*1024: # 640 KB ought to be enough for everybody.
+            logging.error("Infile '%s' is only %s byte(s) long. I am not splitting this."%(caproot + "/" + dirname + "/" + infile, fsize))
+            self.write_dirstate(dirname, "ERROR")
             return False
-        self.pipeline = Gst.Pipeline()
 
-        # Create bus to get events from GStreamer pipeline
-        self.bus = self.pipeline.get_bus()
-        self.bus.add_signal_watch()
-        self.bus.connect('message::pad_added', self.on_pad_added)
+        if self.df() < 1.5 * fsize / 1024 / 1024:
+            logging.error("Not enough disk space! (%s MB free, %s MB needed)" % (self.df(), fsize / 1024 / 1024))
+            self.write_dirstate(dirname, "ERROR")
+            return False
 
-        logging.info("Splitting file %s (%i KB) in dir %s."%(infile, int(fsize/1024), dirname))
-        #TODO auch die Kamera-Streams unterstützen
-        # needed to filter the MPEGTS stream from ENC-300 encoders
-        self.caps = Gst.caps_from_string('video/mpegts, systemstream=(boolean)true, packetsize=(int)188')
-        self.audiocaps = Gst.caps_from_string("audio/mpeg, mpegversion=(int)2, stream-format=(string)adts")
-        self.videocaps = Gst.caps_from_string("video/x-h264")
+        launchstr = "filesrc location=%s ! video/mpegts, systemstream=(boolean)true, packetsize=(int)188 ! " \
+                    "tsdemux name=d ! queue ! video/x-h264 ! queue ! h264parse ! matroskamux ! filesink location=%s " \
+                    "d. ! queue ! audio/mpeg, mpegversion=(int)2, stream-format=(string)adts ! filesink location=%s"%(
+                     caproot + "/" + dirname + "/" + infile,
+                     caproot + "/" + dirname + "/" + of_vid,
+                     caproot + "/" + dirname + "/" + of_aud)
 
-        # set up elements: src -> caps -> demux -> caps -> sinks
-        self.src1 = Gst.ElementFactory.make('filesrc', "filesrc0")
+        pipeline = Gst.parse_launch(launchstr)
 
-        self.src1.set_property("location", caproot + "/" + dirname + "/" + infile)
-        self.pipeline.add(self.src1)
-
-        self.tsparse = Gst.ElementFactory.make("tsparse","tsparser")
-        self.pipeline.add(self.tsparse)
-
-        self.capsFilter1 = Gst.ElementFactory.make("capsfilter", "videostreamfilter")
-        self.capsFilter1.props.caps = self.caps
-        self.pipeline.add(self.capsFilter1)
-
-        self.audiocapsfilter1 = Gst.ElementFactory.make("capsfilter", "audiofilter")
-        self.audiocapsfilter1.props.caps = self.audiocaps
-        self.pipeline.add(self.audiocapsfilter1)
-
-        self.videocapsfilter1 = Gst.ElementFactory.make("capsfilter", "videofilter")
-        self.videocapsfilter1.props.caps = self.videocaps
-        self.pipeline.add(self.videocapsfilter1)
-
-        self.queue_aud1 = Gst.ElementFactory.make('queue', "audioqueue")
-        self.queue_aud1.set_property("max-size-buffers",0)
-        self.queue_aud1.set_property("max-size-time",0)
-        self.pipeline.add(self.queue_aud1)
-
-        self.queue_vid1 = Gst.ElementFactory.make('queue', "videoqueue")
-        self.queue_vid1.set_property("max-size-buffers",0)
-        self.queue_vid1.set_property("max-size-time",0)
-
-        self.pipeline.add(self.queue_vid1)
-
-
-        self.demux1 = Gst.ElementFactory.make("tsdemux", "d1")
-        self.demux1.set_property('emit-stats',True)
-        self.pipeline.add(self.demux1)
-        self.demux1.connect("pad-added", self.on_pad_added, [self.queue_aud1, self.queue_vid1])
-
-        self.sink_vid1 = Gst.ElementFactory.make('filesink', None)
-        self.sink_vid1.set_property('location', caproot + "/" + dirname + "/" + of_vid)
-        self.sink_vid1.set_property('sync', False)
-        self.pipeline.add(self.sink_vid1)
-
-        self.sink_aud1 = Gst.ElementFactory.make('filesink', None)
-        self.sink_aud1.set_property('location', caproot + "/" + dirname + "/" + of_aud)
-        self.sink_aud1.set_property('sync', False)
-        self.pipeline.add(self.sink_aud1)
-
-
-        self.mux1 = Gst.ElementFactory.make('matroskamux', None)
-        self.pipeline.add(self.mux1)
-
-
-        self.queue_h264 = Gst.ElementFactory.make('queue', None)
-        self.queue_h264.set_property("max-size-buffers",0)
-        self.queue_h264.set_property("max-size-time",0)
-        self.pipeline.add(self.queue_h264)
-        self.h264parse1 = Gst.ElementFactory.make('h264parse', None)
-#        self.h264parse1.set_property('config-interval', 10)
-        #self.h264parse1.connect("pad-added", self.on_pad_added, [self.mux1])
-        self.pipeline.add(self.h264parse1)
-        
-
-        # link everything
-        self.src1.link(self.tsparse)
-        self.tsparse.link(self.capsFilter1)
-        self.capsFilter1.link(self.demux1)
-        # demuxer is linked dynamically to queue_aud and _vid
-        self.queue_aud1.link(self.audiocapsfilter1)
-        self.audiocapsfilter1.link(self.sink_aud1)
-        self.queue_vid1.link(self.videocapsfilter1)
-        self.videocapsfilter1.link(self.queue_h264)
-        self.queue_h264.link(self.h264parse1)
-        self.h264parse1.link(self.mux1)
-        self.mux1.link(self.sink_vid1)
-        #self.videocapsfilter1.link(self.sink_vid1)
-
-        bus = self.pipeline.get_bus()
         logging.debug("Setting GST pipeline to 'playing' - start of splitting process.")
-        self.pipeline.set_state(Gst.State.PLAYING)
+        bus = pipeline.get_bus()
+        bus.add_signal_watch()
+
+        pipeline.set_state(Gst.State.PLAYING)
+
+        # todo: Hier was hintun, das nach einer Minute abbricht, falls die Out-Dateien 0 Byte groß sind.
 
         while True:
             message = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE,
@@ -730,25 +745,19 @@ class Ingester:
                     break
                 elif message.type == Gst.MessageType.EOS:
                     logging.info("End-Of-Stream reached. Stopping pipeline.")
-                    self.pipeline.set_state(Gst.State.PAUSED)
-                    del self.pipeline
+                    pipeline.set_state(Gst.State.PAUSED)
+                    del pipeline
+                    del bus
                     return True
-                    break
+
                 elif message.type == Gst.MessageType.STATE_CHANGED:
                     if isinstance(message.src, Gst.Pipeline):
                         old_state, new_state, pending_state = message.parse_state_changed()
                         logging.debug("Pipeline state changed from %s to %s." %
-                              (old_state.value_nick, new_state.value_nick))
+                                      (old_state.value_nick, new_state.value_nick))
                         break
 
         return True
-        #while self.pipeline.get_state(False)[1] == Gst.State.PLAYING:
-        #    print("Playing")
-        #    time.sleep(1)
-        #pipestr = "filesrc location=%s ! capsfilter caps=video/mpegts,systemstream=\(boolean\)true,packetsize=\(int\)188 ! "\
-                   #"tsdemux name=dem ! queue ! video/x-h264 ! filesink location=%s "%(infile, of_vid)#\
-                   #"dem. ! queue ! audio/mpeg ! filesink location=%s"%(infile, of_vid, of_aud)
-        #self.pipeline = Gst.parse_launch(pipestr)
 
 
     def write_dirstate(self, dirname, status):
@@ -777,7 +786,7 @@ class Ingester:
 
     def read_statefile(self, dirname):
         # read the statusfile .RECSTATE from dirname
-        logging.debug("Attempting to read record state from %s/.RECSTATE"%dirname)
+        logging.debug("Attempting to read record state from '%s/.RECSTATE'"%dirname)
         fn = caproot + "/" + dirname + "/.RECSTATE"
         try:
             with open(fn, 'r') as f:
@@ -795,7 +804,7 @@ class Ingester:
         except IndexError:
             return []
 
-    def write_manifest(self, dirname, wfiid, duration, start, fns, flavors):
+    def write_manifest(self, dirname, duration, start, fns, flavors, wfiid=None):
         logging.info("Writing manifest.xml for WFIID %s, FNs %s, flavors %s"%(wfiid, fns, flavors))
         with open('manifest_template.xml', 'r') as f:
             template = f.read()
@@ -804,8 +813,8 @@ class Ingester:
         if not wfiid == None:
             template = template.replace("___ID___", "id=\"" + str(wfiid) +"\"")
         else:
-            logging.error("No WFIID found! Manifest possibly wrong!")
-            # todo er muss doch was machen wenn ich eine unscheduled recording habe!
+            template = template.replace("___ID___", "")
+            logging.info("No WFIID found! This seems to be an unscheduled recording.")
 
         try:
             #b = datetime.datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
@@ -902,18 +911,10 @@ Gst.init(None)
 GObject.threads_init()
 
 
+# if this script is being called directly, start the ingest loop
+if __name__ == "__main__":
+    ing = Ingester()
 
-def testfilecatcher(id, dir):
-    testdir = dir
-    testid = id
-    fns = ("src1.mkv", "src1.aac", "src2.mkv")
-    flavors = ("presentation/source", "presenter-audio/source", "presenter/source")
-    a = ing.get_instancedata(testid)
-    seriesxml = ing.get_seriesdata(a['seriesid'])
-    episodexml = ing.get_episodedata(testid)
-    ing.write_seriesxml(testdir, seriesxml)
-    ing.write_manifest(testdir, testid, a['duration'], a['start'], fns, flavors)
-    ing.write_episodexml(testdir, episodexml)
 
 #testfilecatcher()
 

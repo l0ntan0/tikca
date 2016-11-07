@@ -10,13 +10,10 @@ from dateutil.tz import tzutc
 import sys
 import subprocess
 import base64
-from gi.repository import GLib
 from configobj import ConfigObj
 import gi
 gi.require_version('Gst', '1.0')
 from gi.repository import GObject, Gst
-from io import BytesIO as bio
-import pycurl
 import json
 import signal
 import icalendar
@@ -40,11 +37,9 @@ from grabber import Grabber
 from ingester import Ingester
 
 
-
 # lock to serialize console output
 #lock = threading.Lock()
 
-import logging
 # here, we're adding a file handler
 try:
     console = logging.FileHandler(TIKCFG['logging']['fn'], mode='a', encoding="UTF-8")
@@ -99,19 +94,18 @@ class TIKCAcontrol():
         self.sendsocket.connect(self.dest)
         self.block_cmd = False
         self.udpconnectloop()
-
-        #todo: Watchdog für pausierte Recordings - falls seit mehr als n sekunden pausiert, stop und ingest
+            #todo: Watchdog für pausierte Recordings - falls seit mehr als n sekunden pausiert, stop und ingest
 
 
     def udprc_setup(self):
-        #try:
-        self.udpserver = socketserver.UDPServer(server_address=(TIKCFG['udp']['listenhost'],
+        try:
+            self.udpserver = socketserver.UDPServer(server_address=(TIKCFG['udp']['listenhost'],
                                                                 int(TIKCFG['udp']['listenport'])),
                                                 RequestHandlerClass=UDPHandler)
-        return True
-        #except OSError:
-        #    logging.error("Could not start UDP server!")
-        #    return False
+            return True
+        except:
+            logging.error("Could not start UDP server!")
+            return False
 
     def udpconnectloop(self):
         try:
@@ -121,7 +115,8 @@ class TIKCAcontrol():
                           (TIKCFG['udp']['ctrlstation'], TIKCFG['udp']['sendport']))
 
     def send_email(self, subject, body):
-        if TIKCFG['watch']['mail'] == False:
+        #todo dringend korrigieren: hier kommt kein bool!
+        if TIKCFG['watch']['mail'] == "False":
             return True
         else:
             recipient = TIKCFG['watch']['mailto']
@@ -282,6 +277,7 @@ class TIKCAcontrol():
             logging.debug("Current Unix TS: %i" % self.get_timestamp())
             if self.get_timestamp() > self.STOPTS:
                 logging.debug("Stopping recording because Stopdate has been reached...")
+                ingester.write_dirstate(grabber.RECDIR, "STOPPED")
                 grabber.record_stop()
                 self.STOPTS = None
 
@@ -304,14 +300,15 @@ class TIKCAcontrol():
             uid = nextevent[3].get("uid")
 
 
-
-
-
             if delta < 90: # RIGHT NOW (or at least in 90 seconds), there is an event in this room!
                 self.ANNOUNCEMENT = "Current event in this room: '%s' (ends at %s)"%\
                                     (nextevent[3].get("SUMMARY"), d_end)
                 logging.debug(self.ANNOUNCEMENT)
-                self.NEXTSUBDIR = datetime.datetime.fromtimestamp(nextevent[0]).strftime('%Y%m%d') + "_" + uid
+                self.NEXTEPISODE = base64.b64decode(str(nextevent[3].get("attach")[0])).decode("utf-8")  # episode.xml
+                self.NEXTPROPS = base64.b64decode(str(nextevent[3].get("attach")[1])).decode("utf-8")
+                grabber.NEXTWFIID = uid
+                self.NEXTSUBDIR = uid
+
                 if not grabber.get_recstatus() in ("RECORDING", "PAUSED", "STARTING", "PAUSING"):
                     self.CURSUBDIR = self.NEXTSUBDIR
                     grabber.CURSUBDIR = self.NEXTSUBDIR
@@ -325,20 +322,21 @@ class TIKCAcontrol():
                 # if a) automatic recordings are True,
                 # b) there is nothing being recorded right now and we're not starting the recording right now,
                 # c) there is a scheduled recording for this CA: start recording!
+                # TODO Dringend fixen: Hier kommt kein bool...!
                 if (grabber.get_recstatus() == "IDLE" or grabber.get_recstatus() == "ERROR")\
-                and bool(TIKCFG['capture']['autostart']) == True \
+                and TIKCFG['capture']['autostart'] == "True" \
                 and not grabber.get_recstatus() == "STARTING":
                     logging.debug("Trying to start recording (Autostart is set to True)...")
                     grabber.setup_recorddir(subdir=self.NEXTSUBDIR, epidata=self.NEXTEPISODE)
-                    self.tries = 0
-                    if grabber.standby():
-                        logging.debug("Grabber is in standby mode. Starting recording...")
-                        grabber.record_start()
-                        # set a stop date
-                        self.STOPTS = int(nextevent[1])
-                        # from here on, leave it to watch_recstart to start the recording
-                        self.t5 = threading.Timer(2.0, self.watch_recstart)
-                        self.t5.start()
+                    # set a stop date
+                    self.STOPTS = int(nextevent[1])
+                    logging.debug("Creating pipeline in standby...")
+                    grabber.pipe_create()
+                    logging.debug("Starting recording.")
+                    grabber.record_start()
+                    logging.debug("Telling Opencast core that WFIID %s is capturing."%uid)
+                    ingester.set_oc_recstate("capturing", uid)
+
 
             else:
                 # currently, there is no event. But soon there will be one.
@@ -348,11 +346,13 @@ class TIKCAcontrol():
                               (nextevent[3].get("SUMMARY"), uid, d_start, d_end, str(d_timeuntil).split(".")[0]))
                 self.ANNOUNCEMENT = "Next event: '%s' at %s."%\
                                 (nextevent[3].get("SUMMARY"), d_start)
+                self.NEXTEPISODE = None
+                self.NEXTPROPS = None
+                grabber.NEXTWFIID = None
+                self.NEXTSUBDIR = None
+                self.CURSUBDIR = ""
+                grabber.CURSUBDIR = ""
 
-
-            self.NEXTEPISODE = base64.b64decode(str(nextevent[3].get("attach")[0])).decode("utf-8")  # episode.xml
-            self.NEXTPROPS = base64.b64decode(str(nextevent[3].get("attach")[1])).decode("utf-8")
-            grabber.NEXTWFIID = uid
 
 
 
@@ -370,12 +370,13 @@ class TIKCAcontrol():
 
 
     def watch_recstart(self):
+        #deprecated!!!
         global grabber
         GObject.threads_init()
         Gst.init(None)
         # We're only called when a record should be starting.
         # Therefore, if the pipeline is in Gst.State.PAUSED, we're not running while we should be.
-        if grabber.pipeline.get_state(False)[1] == Gst.State.PAUSED and self.ultimatetries <= 5:
+        a = """if grabber.pipeline.get_state(False)[1] == Gst.State.PAUSED and self.ultimatetries <= 5:
             # try again to push the PLAY-Button
             #grabber.pipeline.set_state(Gst.State.PLAYING) # DAS könnte der ultimative Desync-Fehler sein.
             t = threading.Timer(1.0, self.watch_recstart)
@@ -398,21 +399,27 @@ class TIKCAcontrol():
                 t4.start()
 
                 self.tries = 0
-                self.ultimatetries += 1
+                self.ultimatetries += 1"""
+        try:
+            grabber.pipeline
+            if grabber.pipeline.get_state(False)[1] == Gst.State.PLAYING:
+                # we're finally happy: The pipeline is running
+                logging.info("Pipeline running!")
+                grabber.set_recstatus("RECORDING")
+                grabber.set_ocstatus("capturing")
+                return True
+        except:
+            pass
+            # billiger workaround, bis es nur noch einen record start watcher gibt.
+        self.t = threading.Timer(0.2, mycontrol.watch_recstart)
+        self.t.start()
 
-
-        elif grabber.pipeline.get_state(False)[1] == Gst.State.PLAYING:
-            # we're finally happy: The pipeline is running
-            logging.info("Pipeline running!")
-            grabber.set_recstatus("RECORDING")
-            grabber.set_ocstatus("capturing")
-
-        if self.ultimatetries > 5:
+        a = """if self.ultimatetries > 5:
             # we tried five times to remove and rebuild the pipeline; this has to end.
             logging.error("FATAL ERROR! Tried five times to remove and rebuild pipeline. Not trying anymore.")
             grabber.set_recstatus("IDLE")
             # todo: set state to error
-            self.ultimatetries = 0
+            self.ultimatetries = 0"""
 
 
 
@@ -500,6 +507,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
         self.lastmsg = data
 
         # make sure only one thing is done at a time
+        #todo does this make sense?
         #if mycontrol.block_cmd:
         #    logging.error("Too much for me.")
         #    return
@@ -522,30 +530,26 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 # is there no scheduled event? -> make recdir with unique name
                 # is solved in grabber.setup_recorddir
                 grabber.setup_recorddir(subdir=mycontrol.NEXTSUBDIR, epidata=mycontrol.NEXTEPISODE)
+                mycontrol.send_email("TIKCA on %s: Recording started by command."%TIKCFG['agent']['name'], "")
+                mycontrol.block_cmd = False
                 logging.debug("Creating pipeline in standby...")
-                if grabber.standby():
-                    logging.debug("Starting recording.")
-                    mycontrol.send_email("TIKCA on %s: Recording started by command."%TIKCFG['agent']['name'], "")
-                    grabber.record_start()
-                    mycontrol.block_cmd = False
-                    self.t = threading.Timer(0.8, mycontrol.watch_recstart)
-                    self.t.start()
-                else:
-                    logging.error("Grabber failed to enter standby mode before recording!")
+                grabber.pipe_create()
+                logging.debug("Starting recording.")
+                grabber.record_start()
+                logging.debug("Telling Opencast core that WFIID %s is capturing."%grabber.NEXTWFIID)
+                ingester.set_oc_recstate("capturing", grabber.NEXTWFIID)
 
             elif grabber.get_recstatus() == "PAUSED":
                 logging.debug("Restarting recording from pause.")
                 grabber.record_start()
-                self.t = threading.Timer(0.8, mycontrol.watch_recstart)
-                self.t.start()
+                mycontrol.block_cmd = False
             else:
                 logging.error("Got UDP command to START recording while recording is going on already.")
             mycontrol.block_cmd = False
 
         if ":STOP" in data:
-            if (grabber.get_recstatus() == "PAUSED" or grabber.get_recstatus() == "RECORDING"):
+            if grabber.get_pipestatus() in ["capturing", "paused"]:
                 mycontrol.send_email("TIKCA on %s: Recording stopped by command." % TIKCFG['agent']['name'], "")
-                #todo pause -> stop geht irgendwie noch nicht
                 mycontrol.block_cmd = True
                 logging.debug("Getting UDP command to stop recording")
                 logging.info("Stopping recording")
@@ -554,9 +558,6 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 mycontrol.CURSUBDIR = None
                 grabber.CURSUBDIR = None
                 mycontrol.block_cmd = False
-                #ingest_thread = threading.Thread(target=mycontrol.ingest, args=(grabber.RECDIR,))
-                #ingest_thread.start()
-
             else:
                 logging.error("Got UDP command to STOP recording, but no recording is going on.")
 
