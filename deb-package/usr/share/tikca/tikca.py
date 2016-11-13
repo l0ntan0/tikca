@@ -277,8 +277,8 @@ class TIKCAcontrol():
             logging.debug("Current Unix TS: %i" % self.get_timestamp())
             if self.get_timestamp() > self.STOPTS:
                 logging.debug("Stopping recording because Stopdate has been reached...")
-                ingester.write_dirstate(grabber.RECDIR, "STOPPED")
                 grabber.record_stop()
+                ingester.write_dirstate(grabber.RECDIR, "STOPPED")
                 self.STOPTS = None
 
         tmp = self.get_schedule()
@@ -334,8 +334,9 @@ class TIKCAcontrol():
                     grabber.pipe_create()
                     logging.debug("Starting recording.")
                     grabber.record_start()
-                    logging.debug("Telling Opencast core that WFIID %s is capturing."%uid)
-                    ingester.set_oc_recstate("capturing", uid)
+                    if not uid == None:
+                        logging.debug("Telling Opencast core that WFIID %s is capturing."%uid)
+                        ingester.set_oc_recstate("capturing", uid)
 
 
             else:

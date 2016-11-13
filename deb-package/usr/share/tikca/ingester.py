@@ -164,6 +164,7 @@ class Ingester:
 
         except FileNotFoundError:
             logging.error("No stream log file in directory '%s'! Using default flavor names."%dirname)
+            # define standard flavours, if there is no analyze file. Take care of single stream configs.
             try:
                 stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['src1_stdflavor'],
                           TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['stdflavor_audio'],
@@ -173,7 +174,7 @@ class Ingester:
                 stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['src1_stdflavor'],
                               TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['stdflavor_audio']}
 
-                for stdfn, stdflv in stdfnsflvs.items():
+            for stdfn, stdflv in stdfnsflvs.items():
                 fn = caproot + "/" + dirname + "/" + stdfn
                 logging.debug("Looking for file %s..."%fn)
                 if os.path.isfile(fn):
@@ -717,8 +718,8 @@ class Ingester:
             return False
 
         launchstr = "filesrc location=%s ! video/mpegts, systemstream=(boolean)true, packetsize=(int)188 ! " \
-                    "tsdemux name=d ! queue ! video/x-h264 ! queue ! h264parse ! matroskamux ! filesink location=%s " \
-                    "d. ! queue ! audio/mpeg, mpegversion=(int)2, stream-format=(string)adts ! filesink location=%s"%(
+                    "tsdemux name=d ! queue2 ! video/x-h264 ! queue2 ! h264parse ! queue2 ! matroskamux ! queue2 ! filesink location=%s " \
+                    "d. ! queue2 ! audio/mpeg, mpegversion=(int)2, stream-format=(string)adts ! queue2 ! filesink location=%s"%(
                      caproot + "/" + dirname + "/" + infile,
                      caproot + "/" + dirname + "/" + of_vid,
                      caproot + "/" + dirname + "/" + of_aud)

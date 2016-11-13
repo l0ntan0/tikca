@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dublincore xmlns="http://www.opencastproject.org/xsd/1.0/dublincore/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:oc="http://www.opencastproject.org/matterhorn/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dcterms:creator>___CREATOR___</dcterms:creator>
+  <dcterms:isPartOf>___SERID___</dcterms:isPartOf>
+  <dcterms:license>Creative Commons 3.0: Attribution-NonCommercial-NoDerivs</dcterms:license>
+  <dcterms:temporal xsi:type="dcterms:Period">start=___START___; end=___END___; scheme=W3C-DTF;</dcterms:temporal>
+  <dcterms:title>___TITLE___</dcterms:title>
+  <dcterms:spatial>___CANAME___</dcterms:spatial>
+  <dcterms:recordDate>___START___</dcterms:recordDate>
+  <dcterms:created>___START___</dcterms:created>
+</dublincore>

@@ -292,21 +292,14 @@ class Grabber:
                 os.makedirs(self.RECDIR)
 
         # save episode.xml
-        logging.debug("Been here1")
-        logging.debug("epidata %s"%epidata)
 
         if not epidata == None:
-            logging.debug("Been here2")
             with open(self.RECDIR + "/" + "episode.xml", "w") as f:
-                logging.debug("Been here3")
-                f.write(epidata)
-                logging.debug("Been here4")
                 logging.debug("Writing episode.xml...")
-
+                f.write(epidata)
             ingester.write_dirstate(self.RECDIR, "WFIID\t%s"%self.NEXTWFIID)
 
         # save recording.properties
-        logging.debug("Been here5")
         if not props == None:
             with open(self.RECDIR + "/" + "recording.properties", "w") as f:
                 f.write(props)
