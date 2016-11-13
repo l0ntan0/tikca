@@ -56,6 +56,8 @@ class Ingester:
             #ingthr.daemon = True
             ingthr.start()
 
+    def __main__(self):
+        print("bla")
 
     def get_media_length(self, dirname, fn):
         if TIKCFG['ingester']['probe'] == "ffprobe":
@@ -343,7 +345,8 @@ class Ingester:
                 if stateline[1] == "STOPPED":
                     return stateline[0]
 
-        return "1970-01-01T01:00:00Z"
+        return "1970-01-01T00:00:00Z"
+
 
     def ingestscanloop(self, scanroot = caproot):
         # list dirs
@@ -356,7 +359,7 @@ class Ingester:
                         and not entry == TIKCFG['ingester']['moveto'] \
                         and os.path.isdir(scanroot + "/" + entry):
                     dirlist.append(entry)
-
+            print(dirlist)
             self.queue = []
 
             for dirtoscan in dirlist:
@@ -397,7 +400,6 @@ class Ingester:
                     # only attempt to split the second file if there is a name defined
                     try:
                         TIKCFG['capture']['src2_fn_orig']
-
                         if self.splitfile_new(task[0], TIKCFG['capture']['src2_fn_orig'],
                                         TIKCFG['capture']['src2_fn_vid'], TIKCFG['capture']['src2_fn_aud']):
                             self.write_dirstate(task[0], "SPLIT;STREAM2")
@@ -410,6 +412,9 @@ class Ingester:
 
                     if errstate == False:
                         self.write_dirstate(task[0], "SPLITCOMPLETE")
+
+
+
 
 
 
@@ -724,6 +729,7 @@ class Ingester:
                      caproot + "/" + dirname + "/" + of_vid,
                      caproot + "/" + dirname + "/" + of_aud)
 
+
         pipeline = Gst.parse_launch(launchstr)
 
         logging.debug("Setting GST pipeline to 'playing' - start of splitting process.")
@@ -759,7 +765,6 @@ class Ingester:
                         break
 
         return True
-
 
     def write_dirstate(self, dirname, status):
         # append a status file into the directory dirname

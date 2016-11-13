@@ -334,6 +334,7 @@ class TIKCAcontrol():
                     grabber.pipe_create()
                     logging.debug("Starting recording.")
                     grabber.record_start()
+
                     if not uid == None:
                         logging.debug("Telling Opencast core that WFIID %s is capturing."%uid)
                         ingester.set_oc_recstate("capturing", uid)
@@ -549,7 +550,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
             mycontrol.block_cmd = False
 
         if ":STOP" in data:
-            if grabber.get_pipestatus() in ["capturing", "paused"]:
+            if grabber.get_recstatus() in ["RECORDING", "STARTING", "PAUSED", "PAUSING"]:
                 mycontrol.send_email("TIKCA on %s: Recording stopped by command." % TIKCFG['agent']['name'], "")
                 mycontrol.block_cmd = True
                 logging.debug("Getting UDP command to stop recording")
