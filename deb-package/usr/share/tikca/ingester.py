@@ -376,7 +376,7 @@ class Ingester:
                 except IndexError:
                     logging.error("Found dir '%s' with no status information. Ignoring." % dirtoscan)
 
-            #logging.debug("Queue is: %s"%self.queue)
+
             for task in self.queue:
                 wfiid = self.get_wfiid_from_dir(task[0])
                 if "ING" in task[2]:
@@ -412,6 +412,7 @@ class Ingester:
 
                     if errstate == False:
                         self.write_dirstate(task[0], "SPLITCOMPLETE")
+                        self.ingestscanloop()
 
 
 
@@ -444,6 +445,7 @@ class Ingester:
                         )
                         if ret:
                             self.write_dirstate(task[0], "ANALYZED")
+                            self.ingestscanloop()
                         else:
                             self.write_dirstate(task[0], "ERROR")
                     else:
@@ -470,7 +472,7 @@ class Ingester:
                             episodexml = self.get_episodedata(wfiid)
                             self.write_episodexml(task[0], episodexml)
                         except KeyError:
-                            logging.error("No episode data. what shall i do? klappt ads hier, wenn es keine episode gibt?")
+                            logging.error("No episode data. what shall i do? klappt das hier, wenn es keine episode gibt?")
 
 
                     else:
@@ -526,9 +528,11 @@ class Ingester:
 
                 elif task[2] == "UPLOADED":
                     if len(TIKCFG['ingester']['moveto']) > 0:
+                        logging.info("Moving dir '%s' to subdir '%s'."%(task[0], TIKCFG['ingester']['moveto']))
                         self.move_ingested(task[0])
+                    else:
+                        logging.debug("Directory %s has already been ingested, skipping..."%task[0])
 
-                    logging.debug("Directory %s has already been ingested, skipping..."%task[0])
                 elif task[2] == "ERROR":
                     step_before_error = self.get_last_state(dirtoscan, -3)
                     logging.info("Found dir %s in an error state after '%s'."%(task[0], step_before_error))
@@ -704,6 +708,16 @@ class Ingester:
         #logging.debug("MB available: %i"%MB_free)
         return MB_free
 
+    def splitwatchdog(self, dirname, of_vid, of_aud):
+        time.sleep(5)
+        if self.pipeline.get_state(False)[1] == Gst.State.PLAYING:
+            logging.info("Splitting process in dir '%s':" % (dirname))
+            logging.info("%s \t %s KB" % (of_vid, os.path.getsize(caproot + "/" + dirname + "/" + of_vid)))
+            logging.info("%s \t %s KB" % (of_aud, os.path.getsize(caproot + "/" + dirname + "/" + of_aud)))
+            self.splitwatchdog(dirname, of_vid, of_aud)
+        else:
+            logging.error("This pipeline doesn\'t run.")
+
     def splitfile_new(self, dirname, infile, of_vid, of_aud):
         # split mpegts streams into parts
 
@@ -729,14 +743,17 @@ class Ingester:
                      caproot + "/" + dirname + "/" + of_vid,
                      caproot + "/" + dirname + "/" + of_aud)
 
+        wd = threading.Thread(target=self.splitwatchdog, kwargs={"dirname": dirname, "of_vid": of_vid, "of_aud": of_aud})
+        wd.daemon = True
+        wd.start()
 
-        pipeline = Gst.parse_launch(launchstr)
 
-        logging.debug("Setting GST pipeline to 'playing' - start of splitting process.")
-        bus = pipeline.get_bus()
+        self.pipeline = Gst.parse_launch(launchstr)
+
+        bus = self.pipeline.get_bus()
         bus.add_signal_watch()
-
-        pipeline.set_state(Gst.State.PLAYING)
+        logging.debug("Setting GST pipeline to 'playing' - start of splitting process.")
+        self.pipeline.set_state(Gst.State.PLAYING)
 
         # todo: Hier was hintun, das nach einer Minute abbricht, falls die Out-Dateien 0 Byte groß sind.
 
@@ -752,8 +769,9 @@ class Ingester:
                     break
                 elif message.type == Gst.MessageType.EOS:
                     logging.info("End-Of-Stream reached. Stopping pipeline.")
-                    pipeline.set_state(Gst.State.PAUSED)
-                    del pipeline
+                    self.pipeline.set_state(Gst.State.PAUSED)
+                    del wd
+                    del self.pipeline
                     del bus
                     return True
 
@@ -873,7 +891,7 @@ class Ingester:
     def get_seriesdata(self, seriesid):
         url = "%s/series/%s.xml" % (TIKCFG['server']['url'], seriesid)
         try:
-            xmlstring = self.curlreq(url).decode("UTF-8")
+            xmlstring = curlreq(url).decode("UTF-8")
         except Exception:
             return ""
 
