@@ -1,30 +1,34 @@
+# Create user, if it does not exist
 ret=false
 getent passwd matterhorn > /dev/null 2>&1 && ret=true
-
 if ! $ret; then
 	adduser --system --no-create-home --disabled-login matterhorn
 fi
 
+
+# Create recordings dir and set privs
 if [ ! -d /srv/recordings ]; then
 	mkdir -p /srv/recordings
 fi
 
 chown -R matterhorn /srv/recordings/
 
-if [ ! -f /var/log/tikca.log ]; then
-	touch /var/log/tikca.log
-fi
-chown matterhorn /var/log/tikca.log
 
-if [ ! -f /var/log/tikca_comm.log ]; then
-        touch /var/log/tikca_comm.log
+# Create log dir and set privs
+if [ ! -f /var/log/tikca/tikca.log ]; then
+	touch /var/log/tikca/tikca.log
 fi
-chown matterhorn /var/log/tikca_comm.log
 
-if [ ! -f /var/log/tikca_ingest.log ]; then
-        touch /var/log/tikca_ingest.log
+if [ ! -f /var/log/tikca/tikca_comm.log ]; then
+        touch /var/log/tikca/tikca_comm.log
 fi
-chown matterhorn /var/log/tikca_ingest.log
+
+if [ ! -f /var/log/tikca/tikca_ingest.log ]; then
+        touch /var/log/tikca/tikca_ingest.log
+fi
+
+chown -R matterhorn.nogroup /var/log/tikca
+chmod 755 /var/log/tikca
 
 exit 0
 

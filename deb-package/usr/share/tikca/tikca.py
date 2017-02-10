@@ -344,8 +344,10 @@ class TIKCAcontrol():
                 # currently, there is no event. But soon there will be one.
                 # Things to do:
                 # leave everything ready for unscheduled recordings
-                logging.debug("Next event ('%s', UID %s) occurs from %s to %s. This is in %s."%
-                              (nextevent[3].get("SUMMARY"), uid, d_start, d_end, str(d_timeuntil).split(".")[0]))
+                logging.info("Next event ('%s', UID %s) occurs from %s to %s."%
+                             (nextevent[3].get("SUMMARY"), uid, d_start, d_end))
+                logging.info("This is in %s."%
+                              str(d_timeuntil).split(".")[0])
                 self.ANNOUNCEMENT = "Next event: '%s' at %s."%\
                                 (nextevent[3].get("SUMMARY"), d_start)
                 self.NEXTEPISODE = None
@@ -460,6 +462,8 @@ class TIKCAcontrol():
                 logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src1_adminhost'])
                 if not (self.hostcheck(TIKCFG['capture']['src1_adminhost'])):
                     logging.error("Host %s is down!"%TIKCFG['capture']['src1_adminhost'])
+                else:
+                    logging.debug("Host %s is up!" % TIKCFG['capture']['src1_adminhost'])
 
             try:
                 TIKCFG['capture']['src2_adminhost']
@@ -467,6 +471,8 @@ class TIKCAcontrol():
                     logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src2_adminhost'])
                     if not (self.hostcheck(TIKCFG['capture']['src2_adminhost'])):
                         logging.error("Host %s is down!"%TIKCFG['capture']['src2_adminhost'])
+                    else:
+                        logging.debug("Host %s is up!" % TIKCFG['capture']['src2_adminhost'])
             except KeyError:
                 pass
         self.tp = threading.Timer(float(TIKCFG['watch']['enc_time']), self.watch_hosts)

@@ -1,5 +1,6 @@
 if [ -f /etc/init.d/tikca ]; then
     service tikca stop
+    service tikca-ingester stop
 fi
 
 find /usr/share/tikca -name *.pyc -exec rm {} \;

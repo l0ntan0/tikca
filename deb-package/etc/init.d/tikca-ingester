@@ -1,0 +1,23 @@
+### BEGIN INIT INFO
+# Provides:          tikca-ingester
+# Required-Start:    $syslog $network
+# Required-Stop:     $syslog $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Start tikca-ingester at boot time
+# Description:       Enable service provided by tikca-ingester.
+### END INIT INFO
+start on runlevel [2345]
+stop on runlevel [^2345]
+
+chdir /usr/share/tikca
+setuid matterhorn
+env LANG=de_DE.UTF-8
+console log
+respawn
+respawn limit 20 5
+
+script
+    python3 /usr/share/tikca/ingester.py
+    echo "TIKCA-Ingester started"
+end script

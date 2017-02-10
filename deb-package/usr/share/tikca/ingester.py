@@ -20,6 +20,7 @@ from io import BytesIO as bio
 from xml.etree import ElementTree
 from xml.dom import minidom
 import pycurl
+import shlex
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--tikcacfg", help="the tikca configfile", default='/etc/tikca.conf')
@@ -57,7 +58,7 @@ class Ingester:
             ingthr.start()
 
     def __main__(self):
-        print("bla")
+        pass
 
     def get_media_length(self, dirname, fn):
         if TIKCFG['ingester']['probe'] == "ffprobe":
@@ -74,8 +75,7 @@ class Ingester:
                 return(round(float(jsondata['streams'][0]['duration'])))
             except KeyError:
                 logging.error('Did not find any length data in FFProbe output: %s'%jsondata)
-                #todo irgendeine andere zeit generieren
-                return(0)
+                return 60*90
 
 
 
@@ -113,7 +113,7 @@ class Ingester:
                     else:   # if max = P or max = B
                         src1_flavor = "presentation/source"
 
-
+            # if there are less than 10 seconds of real video in src2, assume there is no flavor.
             if src2_stats["C"] + src2_stats["P"] - src2_stats["B"] < 10:
                 src2_flavor = None
             else:
@@ -131,7 +131,7 @@ class Ingester:
 
 
             # If we've got two video files, a new problem arises:
-            # We cannot have 2x"presenter/source", neither 2x"presentation/source".
+            # We cannot have 2x the same flavour.
             try:
                 src2_flavor
                 if src1_flavor == "presenter/source" and src2_flavor == "presenter/source":
@@ -140,41 +140,54 @@ class Ingester:
                     src2_flavor = "presentation2/source"
                 logging.info("Flavor of source 1: '%s'" % src1_flavor)
                 logging.info("Flavor of source 2: '%s'" % src2_flavor)
-                if not src1_flavor == None: flavors.append(src1_flavor)
-                if not src2_flavor == None: flavors.append(src2_flavor)
+                if not src1_flavor == None:
+                    flavors.append(src1_flavor)
+                if not src2_flavor == None:
+                    flavors.append(src2_flavor)
 
             except:
-                logging.debug("Only having one video file in %s; not trying to assume which is presentation and which is presenter.")
+                logging.debug("Only having one video file.")
                 logging.info("Flavor of source 1: '%s'" % src1_flavor)
-                if not src1_flavor == None: flavors.append(src1_flavor)
+                if not src1_flavor == None:
+                    flavors.append(src1_flavor)
 
-            # take one sound file: that which has less 'B' marks
-            if src1_stats['C'] + src1_stats['P'] >= src2_stats['C'] + src2_stats['P']:
-                if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src1_fn_aud']):
-                    fns.append(TIKCFG['capture']['src1_fn_aud'])
-            else:
-                try:
-                    TIKCFG['capture']['src2_fn_aud']
-                    if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src2_fn_aud']):
-                        fns.append(TIKCFG['capture']['src2_fn_aud'])
-                except KeyError:
-                    # send the SRC1 audio file even if it is "black", so we've got something to send
+            # Do we have split files (mkv + aac) or do we ingest one muxed mp4?
+            if TIKCFG['ingester']['ingestas'] == "split":
+                # take one sound file: that which has less 'B' marks
+                if src1_stats['C'] + src1_stats['P'] >= src2_stats['C'] + src2_stats['P']:
                     if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src1_fn_aud']):
                         fns.append(TIKCFG['capture']['src1_fn_aud'])
-            flavors.append("presenter-audio/source")
+                else:
+                    try:
+                        TIKCFG['capture']['src2_fn_aud']
+                        if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src2_fn_aud']):
+                            fns.append(TIKCFG['capture']['src2_fn_aud'])
+                    except KeyError:
+                        # send the SRC1 audio file even if it is "black", so we've got something to send
+                        if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src1_fn_aud']):
+                            fns.append(TIKCFG['capture']['src1_fn_aud'])
+                flavors.append("presenter-audio/source")
 
-
+        # this "except" comes from the search for state.log.
         except FileNotFoundError:
             logging.error("No stream log file in directory '%s'! Using default flavor names."%dirname)
             # define standard flavours, if there is no analyze file. Take care of single stream configs.
             try:
-                stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['src1_stdflavor'],
-                          TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['stdflavor_audio'],
-                          TIKCFG['capture']['src2_fn_aud']: "presenter/backup",
-                          TIKCFG['capture']['src2_fn_vid']: TIKCFG['capture']['src1_stdflavor']}
+                if TIKCFG['ingester']['ingestas'] == "split":
+                    stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['stdflavor_audio'],
+                              TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['src1_stdflavor'],
+                              TIKCFG['capture']['src2_fn_aud']: "presenter/backup",
+                              TIKCFG['capture']['src2_fn_vid']: TIKCFG['capture']['src2_stdflavor']}
+                elif TIKCFG['ingester']['ingestas'] == "mux":
+                    stdfnsflvs = {TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['src1_stdflavor'],
+                                  TIKCFG['capture']['src2_fn_vid']: TIKCFG['capture']['src2_stdflavor']}
             except KeyError:
-                stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['src1_stdflavor'],
-                              TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['stdflavor_audio']}
+                # it seems there is no src2, so let's do the above stuff only for one source
+                if TIKCFG['ingester']['ingestas'] == "split":
+                    stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['stdflavor_audio'],
+                              TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['src1_stdflavor']}
+                elif TIKCFG['ingester']['ingestas'] == "mux":
+                    stdfnsflvs = {TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['src1_stdflavor']}
 
             for stdfn, stdflv in stdfnsflvs.items():
                 fn = caproot + "/" + dirname + "/" + stdfn
@@ -183,9 +196,10 @@ class Ingester:
                     fns.append(stdfn)
                     flavors.append(stdflv)
 
+
         logging.debug("File list: %s, %s"%(flavors, fns))
         if len(fns) < 1:
-            logging.error("Did not find any files in analyzing dir '%s'. This will not be uploaded."%dirname)
+            logging.error("Did not find any files in analyzing dir '%s'. This will not be uploaded." % dirname)
             self.write_dirstate(dirname, "ERROR")
         with open(caproot + "/" + dirname + "/.ANA", "w") as anafile:
             anafile.write(json.dumps((flavors, fns)))
@@ -318,10 +332,12 @@ class Ingester:
                 episode = f.read()
             theline = episode.split("start=")[1]
             ts = theline.split(";")[0]
+            print(ts)
             if len(ts) > 0:
-                return date
+                return ts
             else:
-                logging.info("Did not get a valid date from '%s/episode.xml'. Returning button-press-date instead."%subdir)
+                logging.info("Cannot get a valid start date from '%s/episode.xml'. Returning button-press-date instead."%subdir)
+                logging.debug("episode was %s (split %s)"%(theline, ts))
                 return self.get_start_from_dir(subdir)
         except:
             logging.info("Did not get a valid date from '%s/episode.xml'. Returning button-press-date instead."%subdir)
@@ -359,7 +375,7 @@ class Ingester:
                         and not entry == TIKCFG['ingester']['moveto'] \
                         and os.path.isdir(scanroot + "/" + entry):
                     dirlist.append(entry)
-            print(dirlist)
+
             self.queue = []
 
             for dirtoscan in dirlist:
@@ -379,44 +395,55 @@ class Ingester:
 
             for task in self.queue:
                 wfiid = self.get_wfiid_from_dir(task[0])
-                if "ING" in task[2]:
+                if "ING" in task[2]: # i. e. "SPLITTING", "RECORDING"...
                     logging.debug("Dir '%s' seems to have work in progress ('%s' since %s). Not starting anything new."%(task[0], task[2], task[1]))
 
                     #todo gucken, dass gefailte/gestoppte ingests (zeit liegt zu lange zurück) neu gestartet werden
                     # timedelta(task[1], now()) > 60 min
 
                 elif task[2] == "STOPPED":
-                    logging.info("Directory %s contains recorded files. Starting split step."%task[0])
+                    logging.info("Directory %s contains recorded files. Starting split/mux step."%task[0])
                     # todo: in einen extrathread packen
                     self.write_dirstate(task[0], "SPLITTING")
-                    if self.splitfile_new(task[0], TIKCFG['capture']['src1_fn_orig'], TIKCFG['capture']['src1_fn_vid'],
-                                       TIKCFG['capture']['src1_fn_aud']):
+                    # decide whether we are splitting the mpegts -> aac + mkv or muxing mpegts -> mp4 with stream copy
+                    if TIKCFG['ingester']['ingestas'] == "split":
+                        returnstate1 = self.splitfile_new(task[0], TIKCFG['capture']['src1_fn_orig'],
+                                                         TIKCFG['capture']['src1_fn_vid'],
+                                                         TIKCFG['capture']['src1_fn_aud'])
+                    elif TIKCFG['ingester']['ingestas'] == "mux":
+                        returnstate1 = self.mpegts_to_mp4(task[0], TIKCFG['capture']['src1_fn_orig'],
+                                                         TIKCFG['capture']['src1_fn_vid'])
+
+                    if returnstate1 == True:
                         self.write_dirstate(task[0], "SPLIT;STREAM1")
                         errstate = False
-                    else:
+                    elif returnstate1 == False:
                         self.write_dirstate(task[0], "ERROR")
                         errstate = True
 
                     # only attempt to split the second file if there is a name defined
                     try:
-                        TIKCFG['capture']['src2_fn_orig']
-                        if self.splitfile_new(task[0], TIKCFG['capture']['src2_fn_orig'],
-                                        TIKCFG['capture']['src2_fn_vid'], TIKCFG['capture']['src2_fn_aud']):
+                        if TIKCFG['ingester']['ingestas'] == "split":
+                            returnstate2 = self.splitfile_new(task[0], TIKCFG['capture']['src2_fn_orig'],
+                                                             TIKCFG['capture']['src2_fn_vid'],
+                                                             TIKCFG['capture']['src2_fn_aud'])
+                        elif TIKCFG['ingester']['ingestas'] == "mux":
+                            returnstate2 = self.mpegts_to_mp4(task[0], TIKCFG['capture']['src2_fn_orig'],
+                                                             TIKCFG['capture']['src2_fn_vid'])
+
+                        if returnstate2 == True:
                             self.write_dirstate(task[0], "SPLIT;STREAM2")
                             errstate = False
-                        else:
+                        elif returnstate2 == False:
                             self.write_dirstate(task[0], "ERROR")
                             errstate = True
                     except:
                         logging.info("This is a single stream recorder. Not trying to split second stream.")
 
+
                     if errstate == False:
                         self.write_dirstate(task[0], "SPLITCOMPLETE")
                         self.ingestscanloop()
-
-
-
-
 
 
                 elif task[2] == "SPLITCOMPLETE":
@@ -426,10 +453,6 @@ class Ingester:
 
                     # get the file length (in seconds)
                     flength = self.get_media_length(task[0], TIKCFG['capture']['src1_fn_orig'])
-                    # sometimes we don't get a file length from the original file.
-                    # The audio file, though, contains a valid length most of the time. So we might as well try.
-                    if flength < 1:
-                        flength = self.get_media_length(task[0], TIKCFG['capture']['src1_fn_aud'])
 
                     # Note: We are not getting the real start time ("when did somebody push the play button?"), but
                     # the start time from the episode.xml. If you wanna change this behaviour, this is the line:
@@ -480,7 +503,7 @@ class Ingester:
                         try:
                             self.write_seriesxml(task[0], self.get_seriesdata(TIKCFG['unscheduled']['serid']))
                         except:
-                            logging.error("Cannot get series data for unscheduled recordings. Not doing anything for this directory.")
+                            logging.error("Cannot get series data for unscheduled recordings. Not writing series.xml for this directory.")
                             return False
 
                         # read episode template
@@ -671,7 +694,7 @@ class Ingester:
         if not wfiid == None:
             wfdef, wfcfg = self.get_agentprops(wfiid)
 
-            logging.info('Finishing ingest by writing mediapackage and workflow config')
+            logging.info('Finishing ingest by writing mediapackage and workflow config to dir')
             fields = [('mediaPackage', mediapackage),
                       ('workflowDefinitionId', wfdef),
                       ('workflowInstanceId', wfiid.encode('ascii', 'ignore'))]
@@ -718,6 +741,33 @@ class Ingester:
         else:
             logging.error("This pipeline doesn\'t run.")
 
+    def mpegts_to_mp4(self, dirname, infile, of_vid):
+        if not os.path.isfile(caproot + "/" + dirname + "/" + infile):
+            logging.error("Error while putting file into MP4: File does not exist ('%s')"%(caproot + "/" + dirname + "/" + infile))
+            return False
+
+        fsize = os.path.getsize(caproot + "/" + dirname + "/" + infile)
+        if fsize < 640 * 1024:  # 640 KB ought to be enough for everybody.
+            logging.error("Infile '%s' is only %s byte(s) long. I am not muxing this." % (
+            caproot + "/" + dirname + "/" + infile, fsize))
+            self.write_dirstate(dirname, "ERROR")
+            return False
+
+        if self.df() < 1.5 * fsize / 1024 / 1024:
+            logging.error("Not enough disk space! (%s MB free, %s MB needed)" % (self.df(), fsize / 1024 / 1024))
+            self.write_dirstate(dirname, "ERROR")
+            return False
+
+        cmd = "avconv -i %s -c copy -bsf:a aac_adtstoasc %s -y"%(
+            caproot + "/" + dirname + "/" + infile,
+            caproot + "/" + dirname + "/" + of_vid)
+
+        splitcmd = shlex.split(cmd)
+        logging.debug("Running %s"%splitcmd)
+        proc = subprocess.Popen(splitcmd)
+        (output, err) = proc.communicate()
+        return True
+
     def splitfile_new(self, dirname, infile, of_vid, of_aud):
         # split mpegts streams into parts
 
@@ -746,7 +796,6 @@ class Ingester:
         wd = threading.Thread(target=self.splitwatchdog, kwargs={"dirname": dirname, "of_vid": of_vid, "of_aud": of_aud})
         wd.daemon = True
         wd.start()
-
 
         self.pipeline = Gst.parse_launch(launchstr)
 
@@ -829,7 +878,9 @@ class Ingester:
             return []
 
     def write_manifest(self, dirname, duration, start, fns, flavors, wfiid=None):
-        logging.info("Writing manifest.xml for WFIID %s, FNs %s, flavors %s"%(wfiid, fns, flavors))
+        logging.info("Writing manifest.xml for WFIID %s:)"%wfiid)
+        logging.info("FNs\t %s"%fns)
+        logging.info("Flavors\t %s"%flavors)
         with open('manifest_template.xml', 'r') as f:
             template = f.read()
 
@@ -891,9 +942,11 @@ class Ingester:
     def get_seriesdata(self, seriesid):
         url = "%s/series/%s.xml" % (TIKCFG['server']['url'], seriesid)
         try:
-            xmlstring = curlreq(url).decode("UTF-8")
+            xmlstring = self.curlreq(url).decode("UTF-8")
         except Exception:
-            return ""
+            logging.error("While accessing %s, I found no series data. Return was: '%s'"%
+                          (url, xmlstring))
+            return "No series data!"
 
         root = ElementTree.fromstring(xmlstring)
         xmlstring = (self.xml_prettify(root))
