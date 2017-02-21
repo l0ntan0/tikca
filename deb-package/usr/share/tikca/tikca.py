@@ -373,57 +373,6 @@ class TIKCAcontrol():
                                                                 int(TIKCFG['udp']['sendport'])))
 
 
-    def watch_recstart(self):
-        #deprecated!!!
-        global grabber
-        GObject.threads_init()
-        Gst.init(None)
-        # We're only called when a record should be starting.
-        # Therefore, if the pipeline is in Gst.State.PAUSED, we're not running while we should be.
-        a = """if grabber.pipeline.get_state(False)[1] == Gst.State.PAUSED and self.ultimatetries <= 5:
-            # try again to push the PLAY-Button
-            #grabber.pipeline.set_state(Gst.State.PLAYING) # DAS könnte der ultimative Desync-Fehler sein.
-            t = threading.Timer(1.0, self.watch_recstart)
-            t.start()
-            # ... and watch over it in one second again
-            self.tries += 1
-            # try three times to start by setting "Gst.State.PLAYING"
-
-            if self.tries > 8:
-                # if that doesn't help, kill the pipeline and start all over again
-                logging.error("Waited 8 seconds to start pipeline")
-                grabber.record_stop(eos=False)
-                logging.error("Pipeline didn't start - stopped and removed. Restarting.")
-                grabber.standby()
-                grabber.set_recstatus("STARTING")
-                # push "record start" after one second, look after it after 3 seconds
-                t3 = threading.Timer(0.5, grabber.record_start)
-                t3.start()
-                t4 = threading.Timer(3.0, self.watch_recstart)
-                t4.start()
-
-                self.tries = 0
-                self.ultimatetries += 1"""
-        try:
-            grabber.pipeline
-            if grabber.pipeline.get_state(False)[1] == Gst.State.PLAYING:
-                # we're finally happy: The pipeline is running
-                logging.info("Pipeline running!")
-                grabber.set_recstatus("RECORDING")
-                grabber.set_ocstatus("capturing")
-                return True
-        except:
-            pass
-            # billiger workaround, bis es nur noch einen record start watcher gibt.
-        self.t = threading.Timer(0.2, mycontrol.watch_recstart)
-        self.t.start()
-
-        a = """if self.ultimatetries > 5:
-            # we tried five times to remove and rebuild the pipeline; this has to end.
-            logging.error("FATAL ERROR! Tried five times to remove and rebuild pipeline. Not trying anymore.")
-            grabber.set_recstatus("IDLE")
-            # todo: set state to error
-            self.ultimatetries = 0"""
 
 
 

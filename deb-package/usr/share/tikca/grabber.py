@@ -44,14 +44,11 @@ class Grabber:
     def init_pipe(self):
         # Create GStreamer pipeline
         # TODO: only do this if state != playing
-        #logging.debug("Creating GStreamer Pipeline")
-        #self.pipeline = Gst.Pipeline()
+        return True
 
-        # Create bus to get events from GStreamer pipeline
-        #self.bus = self.pipeline.get_bus()
+    def check_srcstr(self, sourcestring):
+        #todo implement a function that validates "udp://239.25.1.34:4444", "tcp://192.168.1.1:1234" and the like
 
-        #self.bus.add_signal_watch()
-        #self.bus.connect('message::pad_added', self.on_pad_added)
         return True
 
     def pipe_create(self):
@@ -63,53 +60,72 @@ class Grabber:
         # stream-format=\(string\)adts ! filesink location="out.aac"
 
         prot_src1 = TIKCFG['capture']['src1_uri'].split("://")[0]
+        if not self.check_srcstr(TIKCFG['capture']['src1_uri']):
+            logging.error("Definition of capture source 1 is not working! Definition is:")
+            logging.error(TIKCFG['capture']['src1_uri'])
+            return False
+
+
         if prot_src1 == "udp":
             self.pipe1 = Gst.parse_launch("udpsrc uri=%s ! filesink location=%s"%
                                           (TIKCFG['capture']['src1_uri'],
                                            self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']))
-            # 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188'
-            self.bus1 = self.pipe1.get_bus()
-            self.bus1.add_signal_watch()
-            #self.bus1.connect('message::error', self.on_error)
 
+            # todo rtsp support wieder rein
+            # todo evtl das hier wieder rein?
+            # 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188'
+            #self.bus1.connect('message::error', self.on_error)
             #self.bus1.enable_sync_message_emission()
             #self.bus1.connect('sync-message::element', self.on_sync_message)
 
-            #todo evtl das hier wieder rein?
             #self.src1 = Gst.ElementFactory.make('udpsrc', "udpsrc1")
             #self.src1.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
             #self.src1.set_property('buffer-size', 0)
 
-            # todo rtsp support wieder rein
+        elif prot_src1 == "tcp":
+            src1host = TIKCFG['capture']['src1_uri'].split("://")[1]
+            src1port = TIKCFG['capture']['src1_uri'].split(":")[2]
+            self.pipe1 = Gst.parse_launch("tcpclientsrc host=%s port=%s! filesink location=%s"%
+                                          (src1host, src1port, self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']))
 
 
+        # add bus - needed for EOS treatment
+        self.bus1 = self.pipe1.get_bus()
+        self.bus1.add_signal_watch()
+
+        # add second stream
         try:
             # is there a second stream defined?
             TIKCFG['capture']['src2_uri']
+            if not self.check_srcstr(TIKCFG['capture']['src2_uri']):
+                logging.error("Definition of capture source 2 is not working! Definition is:")
+                logging.error(TIKCFG['capture']['src2_uri'])
+                return False
+
             prot_src2 = TIKCFG['capture']['src2_uri'].split("://")[0]
             if prot_src2 == "udp":
                 self.pipe2 = Gst.parse_launch("udpsrc uri=%s ! filesink location=%s" %
                                               (TIKCFG['capture']['src2_uri'],
                                                self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig']))
                 # 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188'
-                self.bus2 = self.pipe2.get_bus()
-                self.bus2.add_signal_watch()
-                #self.bus2.connect('message::error', self.on_error)
+            elif prot_src2 == "tcp":
+                src2host = TIKCFG['capture']['src2_uri'].split("://")[1]
+                src2port = TIKCFG['capture']['src2_uri'].split(":")[2]
+                self.pipe2 = Gst.parse_launch("tcpclientsrc host=%s port=%s! filesink location=%s" %
+                                              (src2host, src2port,
+                                               self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig']))
 
-                # self.bus2.enable_sync_message_emission()
-                # self.bus2.connect('sync-message::element', self.on_sync_message)
+            self.bus2 = self.pipe1.get_bus()
+            self.bus2.add_signal_watch()
 
-                # todo evtl das hier wieder rein?
-                # self.src2 = Gst.ElementFactory.make('udpsrc', "udpsrc1")
-                # self.src2.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
-                # self.src2.set_property('buffer-size', 0)
         except KeyError:
             logging.debug("No SRC2 defined. Setting up pipeline only for SRC1.")
 
         return True
 
     def on_pad_added(self, element, src_pad, q):
-        # needed because the demuxer has dynamically added pads
+        # deprecated
+        # originally needed because the demuxer dynamically added pads dynamically
         # here, the pads are selected due to the naming/content
         logging.debug("Pads added called!")
         caps = src_pad.query_caps(None)
@@ -366,8 +382,4 @@ class Grabber:
 
 # Kamera:
 # gst-launch-1.0 -e rtspsrc location=rtsp://172.25.111.3/ssm/video1 latency=0 name=demux demux. ! queue ! rtph264depay  ! h264parse !  mp4mux name=mux ! filesink location=video.out demux. ! queue ! rtpmp4gdepay ! aacparse ! mux.
-
-
-
-#Kamera:
-#gst-launch-1.0 -e rtspsrc location=rtsp://172.25.111.3/video1 latency=0 name=demux demux. ! queue ! rtph264depay  ! h264parse !  mp4mux name=mux ! filesink location=video.out demux. ! queue ! rtpmp4gdepay ! aacparse ! audio/aac !  mux.
+# oder gst-launch-1.0 -e rtspsrc location=rtsp://172.25.111.3/video1 latency=0 name=demux demux. ! queue ! rtph264depay  ! h264parse !  mp4mux name=mux ! filesink location=video.out demux. ! queue ! rtpmp4gdepay ! aacparse ! audio/aac !  mux.
