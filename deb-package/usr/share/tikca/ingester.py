@@ -864,6 +864,9 @@ class Ingester:
         try:
             with open(fn, 'r') as f:
                 content = [x.strip('\n').split(";") for x in f]
+                # always ignore empty lines
+                emptylines = [ln for ln, x in content if x[0] == ""]
+                content.pop(ln)
                 return content
         except FileNotFoundError:
             logging.error("No status file found in '%s'."%dirname)
