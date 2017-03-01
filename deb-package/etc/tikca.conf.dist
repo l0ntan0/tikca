@@ -4,20 +4,20 @@
 
 [agent]
 name                    = "tikcatest"
-update_frequency        = 5
+update_frequency        = 5	# seconds
 cal_lookahead           = 14    # days
-address                 = "tikcatest.rus.loc"
+address                 = "tikcatest.loc"
 ignore_timezone         = "True"
 
 [server]
-url                     = "https://mh.rus.uni-stuttgart.de"
+url                     = "https://youropencastserver.de"
 username                = "matterhorn_system_account"
-password                = "matterhorn_at_rus"
+password                = "CHANGE_ME"
 
 [capture]
 directory               = "/srv/recordings"
 
-src1_uri                = "udp://239.25.1.33:5555"
+src1_uri                = "udp://239.25.1.1:5555"
 src1_stdflavor          = "presentation/source"
 src1_fn_orig            = "stream1.mpegts"
 src1_fn_vid             = "src1.mkv"
@@ -25,8 +25,8 @@ src1_fn_aud             = "src1.aac"
 src1_iface              = "eth0"
 src1_adminhost          = "172.25.7.33"
 
-src2_uri                = "udp://239.25.1.34:5556"
-src2_stdflavor          = "presentation2/source"
+src2_uri                = "udp://239.25.1.1:5556"
+src2_stdflavor          = "presenter/source"
 src2_fn_orig            = "stream2.mpegts"
 src2_fn_vid             = "src2.mkv"
 src2_fn_aud             = "src2.aac"
@@ -45,17 +45,21 @@ autostart               = False
 
 
 [udp]
+# this is needed for communication with CRESTRON stuff
 ctrlstation             = "172.25.0.36"
 listenhost              = "127.0.0.1"
 listenport              = 8888
 sendport                = 8889
-allowedhost             = "*"
+# Is every host allowed to give commands? If so, set to "*".
+allowedhost             = "*"	
 endchar_send            = "\n"
 endchar_rcv             = "\n"
 
 
 [outlet]
+# This can be used to set GUDE outlets to different states
 update_frequency        = 1
+# List of hosts and the respective outlets on the hosts
 hosts                   = "172.25.0.33", "172.25.0.33"
 outletnrs               = 2, 2
 users                   = "root", "root"
@@ -63,10 +67,10 @@ passwords               = "admin", "admin"
 
 
 [ingester]
-autoingest              = False
+# Here, you can define the behaviour of the ingester service
 looptime                = 1     # in minutes
 retrytimes              = 5     # number of tries to ingest a package
-probe                   = "avprobe" #   could be ffprobe or avprobe
+probe                   = "avprobe" 	#   could be ffprobe or avprobe
 moveto                  = "ingested"    # subdir to move ingested files to. Leavy empty if this is not intended
 ingestas                = "mux" # "mux": mux a mp4 file. "split": split mpegts to mkv and aac.
 
@@ -78,6 +82,7 @@ serid                   = "c2a185a3-0bf4-4163-b241-6eface8ae92b"
 workflow                = "aonly"
 
 [logging]
+logdir			= "/var/log/tikca/"
 fn                      = "tikca.log"
 comm                    = "tikca_comm.log"
 ingestfn		= "tikca_ingest.log"
@@ -88,7 +93,7 @@ df_space                = 4000 # in MB
 enc_time                = 30    # time between checks of encoder pings in seconds
 enc_check               = True  # check whether the encoders are up
 mail                    = False
-mailto                  = "pascal.zurek@tik.uni-stuttgart.de"
-mailserver              = "mailrelay.uni-stuttgart.de"
-maillogin               = "ac120824"
-mailpassword            = "Wurstbrot"
+mailto                  = "your@mailadress.com"
+mailserver              = "mailrelay.yourhost.com"
+maillogin               = "login"
+mailpassword            = "password42"
