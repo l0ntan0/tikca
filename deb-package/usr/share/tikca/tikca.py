@@ -219,16 +219,15 @@ class TIKCAcontrol():
 
         return self.unix_ts(datetime.datetime.now(tz=tzutc()))
 
-    def get_schedule(self):
+    def get_schedule(self, lookahead = int(TIKCFG['agent']['cal_lookahead']) * 24 * 60 * 60):
         # Get schedule for capture agent
-        # this function is taken selfishly from Lars Kiesow's pyCA, I admit it. - PZ
+        # this function is mostly taken from Lars Kiesow's pyCA, I admit it. - PZ
         try:
-            cutoff = ''
-            lookahead = int(TIKCFG['agent']['cal_lookahead']) * 24 * 60 * 60
-            if lookahead:
+            if len(lookahead) > 1:
                 cutoff = '&cutoff=%i' % ((self.get_timestamp() + lookahead) * 1000)
                 calurl = '%s/recordings/calendars?agentid=%s%s' % \
                                 (TIKCFG['server']['url'], TIKCFG['agent']['name'], cutoff)
+                print(calurl)
             vcal = ingester.curlreq(calurl)
         except:
             logging.error('Could not get schedule from %s'%calurl)
@@ -255,8 +254,32 @@ class TIKCAcontrol():
             # Ignore events that have already ended
             if dtend > self.get_timestamp():
                 events.append((dtstart, dtend, uid, event))
+                #TODO on of those days, this should be a dict, not a 4-tuple
 
         return sorted(events, key=lambda x: x[0])
+
+    def write_current_event_wfiid(self):
+        # One should think that get_schedule is enough to get informations about what we're recording.
+        # But there are two cases to fix:
+        # 1. If we start a recording that's scheduled for 11:00 at 10:55, we'll get a basically unscheduled recording.
+        # We can avoid that by checking back in the middle of the recording: Is this really unscheduled? If not, we're
+        # writing it to a file, so we will add the WFIID in the .RECSTATE later and rename the dir for convenience
+        # 2. If somebody keeps the recording running through two or more events by accident, we should split
+        # the recording somehow or at least upload it n times for the n WFIIDs. The first version is better, of course,
+        # but requires more programming, so this is #TODO
+
+        # This is getting the event cal data for the event happening from now to the next 30 seconds:
+        nowplaying = self.get_schedule(30000)[0]
+        try:
+            wfiid = nowplaying[2]
+            #TODO which dir is this?
+            with open(self.RECDIR + "/" + "wfiid.txt", "w") as f:
+                logging.debug("Noting WFIID %s as currently playing...")
+                f.write(timestamp + ";" + wfiid)
+
+
+
+
 
     def fetch_recording_data(self):
         # asks server for upcoming recording
@@ -339,7 +362,6 @@ class TIKCAcontrol():
                         logging.debug("Telling Opencast core that WFIID %s is capturing."%uid)
                         ingester.set_oc_recstate("capturing", uid)
 
-
             else:
                 # currently, there is no event. But soon there will be one.
                 # Things to do:
@@ -357,10 +379,6 @@ class TIKCAcontrol():
                 self.CURSUBDIR = ""
                 grabber.CURSUBDIR = ""
 
-
-
-
-        #return (self.NEXTEPISODE, self.NEXTPROPS) # braucht man das?
         return True
 
 
@@ -371,9 +389,6 @@ class TIKCAcontrol():
         except ConnectionRefusedError:
             logging.error("Cannot send UDP message %s to %s:%s"%(data, TIKCFG['udp']['ctrlstation'],
                                                                 int(TIKCFG['udp']['sendport'])))
-
-
-
 
 
     def watch_length(self):

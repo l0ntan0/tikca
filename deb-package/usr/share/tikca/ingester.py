@@ -50,8 +50,7 @@ class Ingester:
     global TIKCFG
     global caproot
     def __init__(self):
-        if TIKCFG['ingester']['autoingest'] == True \
-                or __name__ == "__main__":
+        if __name__ == "__main__":
             logging.info("STARTING INGEST LOOP...")
             ingthr = threading.Thread(target=self.ingestscanloop)
             #ingthr.daemon = True
@@ -743,22 +742,29 @@ class Ingester:
 
     def mpegts_to_mp4(self, dirname, infile, of_vid):
         if not os.path.isfile(caproot + "/" + dirname + "/" + infile):
-            logging.error("Error while putting file into MP4: File does not exist ('%s')"%(caproot + "/" + dirname + "/" + infile))
+            logging.error("Error while muxing MPEGTS file into MP4: source file does not exist ('%s')"%(caproot + "/" + dirname + "/" + infile))
             return False
 
         fsize = os.path.getsize(caproot + "/" + dirname + "/" + infile)
         if fsize < 640 * 1024:  # 640 KB ought to be enough for everybody.
-            logging.error("Infile '%s' is only %s byte(s) long. I am not muxing this." % (
+            logging.error("Infile '%s' is only %s byte(s) long. I am not muxing/uploading this." % (
             caproot + "/" + dirname + "/" + infile, fsize))
             self.write_dirstate(dirname, "ERROR")
             return False
 
-        if self.df() < 1.5 * fsize / 1024 / 1024:
+        if self.df() < 1.2 * fsize / 1024 / 1024:
             logging.error("Not enough disk space! (%s MB free, %s MB needed)" % (self.df(), fsize / 1024 / 1024))
             self.write_dirstate(dirname, "ERROR")
             return False
 
-        cmd = "avconv -i %s -c copy -bsf:a aac_adtstoasc %s -y"%(
+        # are we working with ffmpeg or avconv? (Ubuntu 14.04 does only deliver libavtools => avprobe and avconv!)
+        if TIKCFG['ingester']['probe'] == "avprobe":
+            convcmd = "avconv"
+        else:
+            convcmd = "ffmpeg"
+
+        cmd = "%s -i %s -c copy -bsf:a aac_adtstoasc %s -y"%(
+            convcmd,
             caproot + "/" + dirname + "/" + infile,
             caproot + "/" + dirname + "/" + of_vid)
 
