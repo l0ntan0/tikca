@@ -1,0 +1,94 @@
+###
+# TIKCA Configuration
+##
+
+[agent]
+name                    = "tikcatest"
+update_frequency        = 5
+cal_lookahead           = 14    # days
+address                 = "tikcatest.rus.loc"
+ignore_timezone         = "True"
+
+[server]
+url                     = "https://mh.rus.uni-stuttgart.de"
+username                = "matterhorn_system_account"
+password                = "matterhorn_at_rus"
+
+[capture]
+directory               = "/srv/recordings"
+
+src1_uri                = "udp://239.25.1.33:5555"
+src1_stdflavor          = "presentation/source"
+src1_fn_orig            = "stream1.mpegts"
+src1_fn_vid             = "src1.mkv"
+src1_fn_aud             = "src1.aac"
+src1_iface              = "eth0"
+src1_adminhost          = "172.25.7.33"
+
+src2_uri                = "udp://239.25.1.34:5556"
+src2_stdflavor          = "presentation2/source"
+src2_fn_orig            = "stream2.mpegts"
+src2_fn_vid             = "src2.mkv"
+src2_fn_aud             = "src2.aac"
+src2_iface              = "eth0"
+src2_adminhost          = "172.25.7.34"
+
+stopafterpaused         = 15    # time in minutes after which a paused recording is considered finished
+maxduration             = 360   # time in minutes after which a recording is stopped (assuming somebody forgot to hit stop)
+stdflavor_audio         = presenter-audio/source
+
+retry                   = 4
+retrywait               = 20
+
+# autostart (bool): record automatically when scheduled (for rooms without ctrl station)
+autostart               = False
+
+
+[udp]
+ctrlstation             = "172.25.0.36"
+listenhost              = "127.0.0.1"
+listenport              = 8888
+sendport                = 8889
+allowedhost             = "*"
+endchar_send            = "\n"
+endchar_rcv             = "\n"
+
+
+[outlet]
+update_frequency        = 1
+hosts                   = "172.25.0.33", "172.25.0.33"
+outletnrs               = 2, 2
+users                   = "root", "root"
+passwords               = "admin", "admin"
+
+
+[ingester]
+autoingest              = False
+looptime                = 1     # in minutes
+retrytimes              = 5     # number of tries to ingest a package
+probe                   = "avprobe" #   could be ffprobe or avprobe
+moveto                  = "ingested"    # subdir to move ingested files to. Leavy empty if this is not intended
+ingestas                = "mux" # "mux": mux a mp4 file. "split": split mpegts to mkv and aac.
+
+
+[unscheduled]
+# seriesid in which unscheduled recordings should be uploaded
+serid                   = "c2a185a3-0bf4-4163-b241-6eface8ae92b"
+# workflow with which unscheduled recordings should be uploaded
+workflow                = "aonly"
+
+[logging]
+fn                      = "tikca.log"
+comm                    = "tikca_comm.log"
+ingestfn		= "tikca_ingest.log"
+
+[watch]
+df_time                 = 3600   # time between checks in seconds
+df_space                = 4000 # in MB
+enc_time                = 30    # time between checks of encoder pings in seconds
+enc_check               = True  # check whether the encoders are up
+mail                    = False
+mailto                  = "pascal.zurek@tik.uni-stuttgart.de"
+mailserver              = "mailrelay.uni-stuttgart.de"
+maillogin               = "ac120824"
+mailpassword            = "Wurstbrot"
