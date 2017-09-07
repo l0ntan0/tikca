@@ -71,10 +71,11 @@ class Ingester:
         with subprocess.Popen(args,stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as p:
             jsondata = json.loads(p.stdout.read().decode("UTF-8"))
             try:
-                return(round(float(jsondata['streams'][0]['duration'])))
+                return(round(float(jsondata['streams'][0]['duration'])*1000))
             except KeyError:
-                logging.error('Did not find any length data in FFProbe output: %s'%jsondata)
-                return 60*90
+                logging.error('Did not find any length data in FF/AVProbe output: %s'%jsondata)
+                logging.error("Returning standard length of 60*90*1000 milliseconds.")
+                return 60*90*1000
 
 
 
@@ -105,8 +106,8 @@ class Ingester:
             if src1_stats["C"] + src1_stats["P"] - src1_stats["B"] < 4:
                 src1_flavor = None
             else:
-                if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src1_fn_vid']):
-                    fns.append(TIKCFG['capture']['src1_fn_vid'])
+                if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['sources']['src1']['prefix_upfile'] + ".mp4"):
+                    fns.append(TIKCFG['sources']['src1']['prefix_upfile'] + ".mp4")
                     if src1_max == "C":
                         src1_flavor = "presenter/source"
                     else:   # if max = P or max = B
@@ -117,9 +118,9 @@ class Ingester:
                 src2_flavor = None
             else:
                 try:
-                    TIKCFG['capture']['src2_fn_vid']
-                    if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src2_fn_vid']):
-                        fns.append(TIKCFG['capture']['src2_fn_vid'])
+                    TIKCFG['sources']['src2']['prefix_upfile']
+                    if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['sources']['src2']['prefix_upfile'] + ".mp4"):
+                        fns.append(TIKCFG['sources']['src2']['prefix_upfile'] + ".mp4")
                         if src2_max == "C":
                             src2_flavor = "presenter/source"
                         else:   # if max = P or max = B
@@ -144,7 +145,7 @@ class Ingester:
                 if not src2_flavor == None:
                     flavors.append(src2_flavor)
 
-            except:
+            except NameError:
                 logging.debug("Only having one video file.")
                 logging.info("Flavor of source 1: '%s'" % src1_flavor)
                 if not src1_flavor == None:
@@ -154,17 +155,17 @@ class Ingester:
             if TIKCFG['ingester']['ingestas'] == "split":
                 # take one sound file: that which has less 'B' marks
                 if src1_stats['C'] + src1_stats['P'] >= src2_stats['C'] + src2_stats['P']:
-                    if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src1_fn_aud']):
-                        fns.append(TIKCFG['capture']['src1_fn_aud'])
+                    if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['sources']['src1']['prefix_upfile'] + ".aac"):
+                        fns.append(TIKCFG['sources']['src1']['prefix_upfile'] + ".aac")
                 else:
                     try:
-                        TIKCFG['capture']['src2_fn_aud']
-                        if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src2_fn_aud']):
-                            fns.append(TIKCFG['capture']['src2_fn_aud'])
+                        TIKCFG['sources']['src2']['prefix_upfile']
+                        if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['sources']['src2']['fn_aud'] + ".aac"):
+                            fns.append(TIKCFG['sources']['src2']['fn_aud'] + ".aac")
                     except KeyError:
                         # send the SRC1 audio file even if it is "black", so we've got something to send
-                        if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['capture']['src1_fn_aud']):
-                            fns.append(TIKCFG['capture']['src1_fn_aud'])
+                        if os.path.isfile(caproot + "/" + dirname + "/" + TIKCFG['sources']['src1']['prefix_upfile'] + ".aac"):
+                            fns.append(TIKCFG['sources']['src1']['prefix_upfile'] + ".aac")
                 flavors.append("presenter-audio/source")
 
         # this "except" comes from the search for state.log.
@@ -173,20 +174,20 @@ class Ingester:
             # define standard flavours, if there is no analyze file. Take care of single stream configs.
             try:
                 if TIKCFG['ingester']['ingestas'] == "split":
-                    stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['stdflavor_audio'],
-                              TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['src1_stdflavor'],
-                              TIKCFG['capture']['src2_fn_aud']: "presenter/backup",
-                              TIKCFG['capture']['src2_fn_vid']: TIKCFG['capture']['src2_stdflavor']}
+                    stdfnsflvs = {TIKCFG['sources']['src1']['fn_aud']: TIKCFG['capture']['stdflavor_audio'],
+                              TIKCFG['sources']['src1']['fn_vid']: TIKCFG['sources']['src1']['stdflavor'],
+                              TIKCFG['sources']['src2']['fn_aud']: "presenter/backup",
+                              TIKCFG['sources']['src2']['fn_vid']: TIKCFG['sources']['src2']['stdflavor']}
                 elif TIKCFG['ingester']['ingestas'] == "mux":
-                    stdfnsflvs = {TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['src1_stdflavor'],
-                                  TIKCFG['capture']['src2_fn_vid']: TIKCFG['capture']['src2_stdflavor']}
+                    stdfnsflvs = {TIKCFG['sources']['src1']['fn_vid']: TIKCFG['sources']['src1']['stdflavor'],
+                                  TIKCFG['sources']['src2']['fn_vid']: TIKCFG['sources']['src2']['stdflavor']}
             except KeyError:
                 # it seems there is no src2, so let's do the above stuff only for one source
                 if TIKCFG['ingester']['ingestas'] == "split":
-                    stdfnsflvs = {TIKCFG['capture']['src1_fn_aud']: TIKCFG['capture']['stdflavor_audio'],
-                              TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['src1_stdflavor']}
+                    stdfnsflvs = {TIKCFG['sources']['src1']['fn_aud']: TIKCFG['capture']['stdflavor_audio'],
+                              TIKCFG['sources']['src1']['fn_vid']: TIKCFG['sources']['src1']['stdflavor']}
                 elif TIKCFG['ingester']['ingestas'] == "mux":
-                    stdfnsflvs = {TIKCFG['capture']['src1_fn_vid']: TIKCFG['capture']['src1_stdflavor']}
+                    stdfnsflvs = {TIKCFG['sources']['src1']['fn_vid']: TIKCFG['sources']['src1']['stdflavor']}
 
             for stdfn, stdflv in stdfnsflvs.items():
                 fn = caproot + "/" + dirname + "/" + stdfn
@@ -209,6 +210,10 @@ class Ingester:
 
         buf = bio()
         curl = pycurl.Curl()
+
+        #url wrapper for backwards compatibility
+        if TIKCFG['server']['version'] == "old":
+            url.replace("/admin-ng", "")
         curl.setopt(curl.URL, url.encode('ascii', 'ignore'))
 
         if post_data:
@@ -231,12 +236,13 @@ class Ingester:
             except:
                 pass
         xferstart = datetime.datetime.now()
-        #try:
+
         # todo fetch all kinds of errors in a good way
         try:
             curl.perform()
         except:
             logging.error("CURL error. Could not connect to '%s'."%url)
+            return "", False
 
         if showprogress:
             logging.info('Transfer duration: {}'.format(datetime.datetime.now() - xferstart))
@@ -246,11 +252,16 @@ class Ingester:
         if int(status / 100) != 2:
             logging.error("ERROR: Request to '%s' failed (HTTP status code %i)"%(url, status))
             result = buf.getvalue()
-            logging.error("Result: %s"%result)
+            if status == 401:
+                logging.error("Forbidden! Check username/password combination.")
+            else:
+                logging.error("Result: '%s'"%result)
+            return result, False
+
         result = buf.getvalue()
 
         buf.close()
-        return result
+        return result, True
 
 
     def progress(self, download_t, download_d, upload_t, upload_d):
@@ -266,6 +277,7 @@ class Ingester:
             jsonstring = self.curlreq(url).decode("UTF-8")
             jsondata = json.loads(jsonstring)
             mediapackage = jsondata['workflow']['mediapackage']
+        #todo fetch errors in a sane way
         except Exception:
             return dict()
 
@@ -296,7 +308,8 @@ class Ingester:
             proj_fs += os.path.getsize(caproot + "/" + dirname + "/" + fn)
 
         if self.df() < proj_fs/1024/1024:
-            logging.error("Not zipping dir %s because there are only %s MB free on device (needed: %s MB)."%(self.df(), round(proj_fs/1024/1024)))
+            logging.error("Not zipping dir %s because there are only %s MB free on device (needed: %s MB)."%
+                          (self.df(), round(proj_fs/1024/1024)))
             return False
 
         zfn = caproot + "/" + dirname +  '/ingest.zip'
@@ -307,7 +320,7 @@ class Ingester:
             ingestzip.write(caproot + '/' + dirname +  '/episode.xml')
             try:
                 ingestzip.write(caproot + "/" + dirname +  '/state.log')
-            except:
+            except FileNotFoundError:
                 logging.info("No state.log file found, not adding to zip file.")
             for fn in fns:
                 logging.debug("Adding file %s to zip file %s."%(fn, zfn))
@@ -321,6 +334,7 @@ class Ingester:
             if not pot_wfiid == "None":
                 logging.debug("Found WFIID %s in dir %s"%(pot_wfiid, subdir))
                 return pot_wfiid
+        #todo define exception in a sane way
         except:
             logging.debug("Did not find WFIID in dir %s. First line reads '%s'" % (subdir, states[0]))
             return None
@@ -331,13 +345,13 @@ class Ingester:
                 episode = f.read()
             theline = episode.split("start=")[1]
             ts = theline.split(";")[0]
-            print(ts)
             if len(ts) > 0:
                 return ts
             else:
                 logging.info("Cannot get a valid start date from '%s/episode.xml'. Returning button-press-date instead."%subdir)
                 logging.debug("episode was %s (split %s)"%(theline, ts))
                 return self.get_start_from_dir(subdir)
+        # todo define exception in a sane way
         except:
             logging.info("Did not get a valid date from '%s/episode.xml'. Returning button-press-date instead."%subdir)
             return self.get_start_from_dir(subdir)
@@ -406,12 +420,12 @@ class Ingester:
                     self.write_dirstate(task[0], "SPLITTING")
                     # decide whether we are splitting the mpegts -> aac + mkv or muxing mpegts -> mp4 with stream copy
                     if TIKCFG['ingester']['ingestas'] == "split":
-                        returnstate1 = self.splitfile_new(task[0], TIKCFG['capture']['src1_fn_orig'],
-                                                         TIKCFG['capture']['src1_fn_vid'],
-                                                         TIKCFG['capture']['src1_fn_aud'])
+                        returnstate1 = self.splitfile(task[0], TIKCFG['sources']['src1']['fn_orig'],
+                                                         TIKCFG['sources']['src1']['prefix_upfile'] + ".mp4",
+                                                         TIKCFG['sources']['src1']['prefix_upfile'] + ".aac")
                     elif TIKCFG['ingester']['ingestas'] == "mux":
-                        returnstate1 = self.mpegts_to_mp4(task[0], TIKCFG['capture']['src1_fn_orig'],
-                                                         TIKCFG['capture']['src1_fn_vid'])
+                        returnstate1 = self.mpegts_to_mp4(task[0], TIKCFG['sources']['src1']['fn_orig'],
+                                                         TIKCFG['sources']['src1']['prefix_upfile'] + ".mp4")
 
                     if returnstate1 == True:
                         self.write_dirstate(task[0], "SPLIT;STREAM1")
@@ -423,12 +437,12 @@ class Ingester:
                     # only attempt to split the second file if there is a name defined
                     try:
                         if TIKCFG['ingester']['ingestas'] == "split":
-                            returnstate2 = self.splitfile_new(task[0], TIKCFG['capture']['src2_fn_orig'],
-                                                             TIKCFG['capture']['src2_fn_vid'],
-                                                             TIKCFG['capture']['src2_fn_aud'])
+                            returnstate2 = self.splitfile(task[0], TIKCFG['sources']['src2']['fn_orig'],
+                                                             TIKCFG['sources']['src2']['prefix_upfile'] + ".mkv",
+                                                             TIKCFG['sources']['src2']['prefix_upfile'] + ".aac")
                         elif TIKCFG['ingester']['ingestas'] == "mux":
-                            returnstate2 = self.mpegts_to_mp4(task[0], TIKCFG['capture']['src2_fn_orig'],
-                                                             TIKCFG['capture']['src2_fn_vid'])
+                            returnstate2 = self.mpegts_to_mp4(task[0], TIKCFG['sources']['src2']['fn_orig'],
+                                                             TIKCFG['sources']['src2']['prefix_upfile'] + ".mp4")
 
                         if returnstate2 == True:
                             self.write_dirstate(task[0], "SPLIT;STREAM2")
@@ -436,7 +450,7 @@ class Ingester:
                         elif returnstate2 == False:
                             self.write_dirstate(task[0], "ERROR")
                             errstate = True
-                    except:
+                    except (NameError, IndexError, AttributeError):
                         logging.info("This is a single stream recorder. Not trying to split second stream.")
 
 
@@ -451,7 +465,7 @@ class Ingester:
                     flavors, fns = self.analyze_stats(task[0])
 
                     # get the file length (in seconds)
-                    flength = self.get_media_length(task[0], TIKCFG['capture']['src1_fn_orig'])
+                    flength = self.get_media_length(task[0], TIKCFG['sources']['src1']['fn_orig'])
 
                     # Note: We are not getting the real start time ("when did somebody push the play button?"), but
                     # the start time from the episode.xml. If you wanna change this behaviour, this is the line:
@@ -501,9 +515,10 @@ class Ingester:
                         # this seems to be an unscheduled recording. We will be treating it as such:
                         try:
                             self.write_seriesxml(task[0], self.get_seriesdata(TIKCFG['unscheduled']['serid']))
+                        # todo define exception in a sane way
                         except:
                             logging.error("Cannot get series data for unscheduled recordings. Not writing series.xml for this directory.")
-                            return False
+
 
                         # read episode template
                         with open('episode_template.xml', 'r') as f:
@@ -529,17 +544,21 @@ class Ingester:
                         jsoncontent = anafile.read()
                         flavors, fns = json.loads(jsoncontent)
 
-                    #try:
-                    self.ingest(fns, flavors, subdir=task[0], wfiid=wfiid)
-                    self.write_dirstate(task[0], "UPLOADED")
-                    #except:
-                    #    logging.error("Upload of wfiid '%s', directory '%s', did not work."%(wfiid, task[0]))
-                    #    self.write_dirstate(task[0], "ERROR")
+                    try:
+                        success = self.ingest(fns, flavors, subdir=task[0], wfiid=wfiid)
+                        if success:
+                            self.write_dirstate(task[0], "UPLOADED")
+                        else:
+                            self.write_dirstate(task[0], "ERROR")
+                    except:
+                        logging.error("Upload of wfiid '%s', directory '%s', did not work."%(wfiid, task[0]))
+                        self.write_dirstate(task[0], "ERROR")
 
                     #if self.zipdir(dirname=task[0], fns=fns):
                     #    self.write_dirstate(task[0], "ZIPPED")
                     #else:
                     #    self.write_dirstate(task[0], "ERROR")
+
                 elif task[2] == "ZIPPED":
                     logging.info("Directory %s has already been zipped. Starting ingest step."%task[0])
                     self.write_dirstate(task[0], "UPLOADING")
@@ -549,6 +568,13 @@ class Ingester:
                         self.write_dirstate(task[0], "ERROR")
 
                 elif task[2] == "UPLOADED":
+                    # Delete uploaded files, if they shall be removed.
+                    # After that, move directory into 'moveto' dir, if that is defined to happen.
+                    if TIKCFG['ingester']['del_after_ingest'] == "True": #todo fix config file bool stuff!
+                        self.write_dirstate(task[0], "DELETING_UFILES")
+                        self.delete_uploadfiles(task[0])
+                        self.write_dirstate(task[0], "DELETED_UFILES")
+
                     if len(TIKCFG['ingester']['moveto']) > 0:
                         logging.info("Moving dir '%s' to subdir '%s'."%(task[0], TIKCFG['ingester']['moveto']))
                         self.move_ingested(task[0])
@@ -576,17 +602,35 @@ class Ingester:
             param.append((prop['key'], prop['$']))
         return param
 
+    def delete_uploadfiles(self, dirname):
+        for source in TIKCFG['sources']:
+            logging.debug("Removing all upload files for %s..."%source)
+            todelete = caproot + "/" + dirname + "/" + TIKCFG['sources'][source]['prefix_upfile'] + ".*"
+            try:
+                os.remove(todelete)
+
+            except OSError:
+                logging.error("Could not remove '%s'"%todelete)
+
     def move_ingested(self, dirname):
         if not os.path.exists(caproot + "/" + TIKCFG['ingester']['moveto']):
             try:
                 os.makedirs(caproot + "/" + TIKCFG['ingester']['moveto'])
+            # todo define exception in a sane way
             except:
                 logging.error("Could not create directory for already ingested files.")
                 return False
-        if os.rename(caproot + "/" + dirname,
-                     caproot + "/" + TIKCFG['ingester']['moveto'] + "/" + dirname):
+        try:
+            os.rename(caproot + "/" + dirname,
+                     caproot + "/" + TIKCFG['ingester']['moveto'] + "/" + dirname)
             logging.info("Moved dir '%s' to directory for already ingested files."%dirname)
             return True
+        except PermissionError as e:
+            logging.error("Cannot move '%s' to directory for already ingested files: \n%s"%
+                          (dirname, e))
+            return False
+        #todo what about other errors?
+
 
     def get_agentprops(self, wfiid):
 
@@ -614,13 +658,8 @@ class Ingester:
             postdata = [('address', TIKCFG['agent']['address']), ('state', state)]
             endpoint = "%s/capture-admin/agents/%s"%(TIKCFG['server']['url'], TIKCFG['agent']['name'])
         response = self.curlreq(endpoint, postdata)
-        """try:
+        # todo catch errors, return something meaningful
 
-            logging.info(response)
-        except:
-            logging.info(response)
-            logging.warning("Could not send capture agent state '%s' to '%s'"%(state, endpoint))
-            return False"""
         return True
 
     def set_oc_recstate(self, state, recid):
@@ -633,6 +672,7 @@ class Ingester:
                 logging.debug("Response from %s: '%s'"%(url, response))
                 return True
             except:
+                # todo define exception in a sane way
                 logging.warning("Could not send recording state for recording ID '%s' to '%s'"%(recid,endpoint))
                 return False
         else:
@@ -642,13 +682,17 @@ class Ingester:
     def ingest(self, fns, flavors, subdir, wfiid=None, wfdef=TIKCFG['unscheduled']['workflow']):
     # this code snippet is mostly stolen from Lars Kiesow's pyCA.
 
+        success = True
+
         if not wfiid == None:
             self.set_oc_recstate("upload", wfiid)
 
         logging.info('Creating new mediapackage')
-        mediapackage = self.curlreq('%s/ingest/createMediaPackage'%TIKCFG['server']['url'])
+        mediapackage, curlsuccess = self.curlreq('%s/ingest/createMediaPackage'%TIKCFG['server']['url'])
         logging.debug("Mediapackage creation answer: %s"%mediapackage.decode("UTF-8"))
         recording_dir = caproot + "/" + subdir
+        if not curlsuccess:
+            return False
 
         # add episode DublinCore catalog
         if os.path.isfile('%s/episode.xml' % recording_dir):
@@ -660,7 +704,9 @@ class Ingester:
             fields = [('mediaPackage', mediapackage),
                       ('flavor', 'dublincore/episode'),
                       ('dublinCore', dublincore)]
-            mediapackage = self.curlreq('%s/ingest/addDCCatalog'%TIKCFG['server']['url'], list(fields))
+            mediapackage, curlsuccess = self.curlreq('%s/ingest/addDCCatalog'%TIKCFG['server']['url'], list(fields))
+            if not curlsuccess:
+                return False
 
         # add series DublinCore catalog
         if os.path.isfile('%s/series.xml' % recording_dir):
@@ -671,7 +717,9 @@ class Ingester:
             fields = [('mediaPackage', mediapackage),
                       ('flavor', 'dublincore/series'),
                       ('dublinCore', dublincore)]
-            mediapackage = self.curlreq('%s/ingest/addDCCatalog'%TIKCFG['server']['url'], list(fields))
+            mediapackage, curlsuccess = self.curlreq('%s/ingest/addDCCatalog'%TIKCFG['server']['url'], list(fields))
+            if not curlsuccess:
+                return False
 
         # add track(s)
         tpls = zip(fns, flavors)
@@ -683,7 +731,9 @@ class Ingester:
                 track = fullfn.encode('ascii', 'ignore')
                 fields = [('mediaPackage', mediapackage), ('flavor', tpl[1]),
                           ('BODY1', (pycurl.FORM_FILE, track))]
-                mediapackage = self.curlreq('%s/ingest/addTrack'%TIKCFG['server']['url'], list(fields), showprogress=True)
+                mediapackage, curlsuccess = self.curlreq('%s/ingest/addTrack'%TIKCFG['server']['url'], list(fields), showprogress=True)
+                if not curlsuccess:
+                    return False
             else:
                 logging.error("The file '%s' does not exist. I am not uploading it."%fullfn)
 
@@ -699,7 +749,9 @@ class Ingester:
                       ('workflowInstanceId', wfiid.encode('ascii', 'ignore'))]
             fields += wfcfg
 
-            mediapackage = self.curlreq('%s/ingest/ingest'%TIKCFG['server']['url'], fields)
+            mediapackage, curlsuccess = self.curlreq('%s/ingest/ingest'%TIKCFG['server']['url'], fields)
+            if not curlsuccess:
+                return False
             logging.info("Writing mediapackage info into directory...")
             with open(recording_dir + "/mediapackage.xml", "w") as f:
                 f.write(mediapackage.decode('utf-8'))
@@ -713,15 +765,16 @@ class Ingester:
             fields = [('mediaPackage', mediapackage),
                       ('workflowDefinitionId', wfdef)]
 
-            mediapackage = self.curlreq('%s/ingest/ingest' % TIKCFG['server']['url'], fields)
+            mediapackage, curlsuccess = self.curlreq('%s/ingest/ingest' % TIKCFG['server']['url'], fields)
+            if not curlsuccess:
+                return False
             logging.info("Writing mediapackage info into directory...")
             with open(recording_dir + "/mediapackage.xml", "w") as f:
                 f.write(mediapackage.decode('utf-8'))
             logging.info("Finished ingest of unscheduled recording from '%s')" % (subdir))
 
 
-
-        return True
+        return state
 
 
     def df(self, mode='mb'):
@@ -774,7 +827,7 @@ class Ingester:
         (output, err) = proc.communicate()
         return True
 
-    def splitfile_new(self, dirname, infile, of_vid, of_aud):
+    def splitfile(self, dirname, infile, of_vid, of_aud):
         # split mpegts streams into parts
 
         if not os.path.isfile(caproot + "/" + dirname + "/" + infile):
@@ -842,12 +895,18 @@ class Ingester:
     def write_dirstate(self, dirname, status):
         # append a status file into the directory dirname
 
-        if status in ["IDLE", "ERROR", "STARTING", "STARTED", "RECORDING", "PAUSED", "STOPPING", "STOPPED",
+        if status in ["IDLE", "ERROR",
+                      "STARTING", "STARTED",
+                      "RECORDING",
+                      "PAUSING", "PAUSED",
+                      "STOPPING", "STOPPED",
                       "SPLITTING", "SPLIT", "SPLITCOMPLETE", "SPLIT;STREAM1", "SPLIT;STREAM2",
                       "ANALYZING", "ANALYZED",
                       "MANIFESTING", "MANIFESTED",
                       "ZIPPING", "ZIPPED",
-                      "UPLOADING", "UPLOADED"] or status.startswith("WFIID"):
+                      "UPLOADING", "UPLOADED",
+                      "DELETING_UFILES", "DELETED_UFILES"] or status.startswith("WFIID"):
+
             now = datetime.datetime.utcnow().replace(microsecond=0)
             try:
                 if dirname.startswith(caproot):
@@ -858,9 +917,10 @@ class Ingester:
                     f.write(now.strftime("%Y-%m-%dT%H:%M:%SZ") + ";" + status + "\n")
                     logging.debug("Wrote status '%s' into dir '%s'"%(status, dirname))
             except:
+                # todo define exception in a sane way
                 logging.error("Could not write state %s in dir %s."%(status, dirname))
         else:
-            logging.error("Cannot set weird status %s."%status)
+            logging.error("Cannot set weird status '%s'."%status)
 
 
     def read_statefile(self, dirname):
@@ -871,8 +931,8 @@ class Ingester:
             with open(fn, 'r') as f:
                 content = [x.strip('\n').split(";") for x in f]
                 # always ignore empty lines
-                emptylines = [ln for ln, x in content if x[0] == ""]
-                content.pop(ln)
+                while [''] in content:
+                    content.pop(content.index(['']))
                 return content
         except FileNotFoundError:
             logging.error("No status file found in '%s'."%dirname)
@@ -906,6 +966,7 @@ class Ingester:
             if len(start) > 3:
                 template = template.replace("___START___", "start=\"" + str(start) + "\"")
         except:
+            # todo define exception in a sane way
             logging.error("START is no ISO string (%s) - not writing start time!"%start)
             template = template.replace("___START___", "")
 
@@ -993,6 +1054,36 @@ class Ingester:
         reparsed = minidom.parseString(rough_string)
         return reparsed.toprettyxml(indent="  ")
 
+    def whathappened(self, isots, caname=TIKCFG['agent']['name']):
+        url = "%s/recordings/recordings.json?spatial=%s" % (TIKCFG['server']['url'], caname)
+
+        try:
+            jsonstr = self.curlreq(url).decode("UTF-8")
+        except Exception:
+            logging.error("Gab nichts schönes vom Server zurück. (Todo.)")
+
+        events = json.loads(jsonstr)
+        event_tpls = []
+        #print(events)
+        dt_inbetween = datetime.datetime.strptime(isots, "%Y-%m-%dT%H:%M:%SZ")
+        for event in events['catalogs']:
+            instr = event['http://purl.org/dc/terms/']['temporal'][0]['value']
+            print(instr.split("start=")[1].split(";")[0])
+            print(instr.split("end=")[1].split(";")[0])
+
+            dt_start = datetime.datetime.strptime(instr.split("start=")[1].split(";")[0], "%Y-%m-%dT%H:%M:%SZ")
+            dt_end = datetime.datetime.strptime(instr.split("end=")[1].split(";")[0], "%Y-%m-%dT%H:%M:%SZ")
+            event_tpls.append((dt_start, dt_end))
+            if dt_inbetween > dt_start and dt_inbetween < dt_end:
+                print("YEAH")
+        print(event_tpls)
+
+
+
+
+
+
+
 Gst.init(None)
 GObject.threads_init()
 
@@ -1000,6 +1091,7 @@ GObject.threads_init()
 # if this script is being called directly, start the ingest loop
 if __name__ == "__main__":
     ing = Ingester()
+    #ing.whathappened(isots="2016-09-21T00:01:01Z")
 
 
 #testfilecatcher()

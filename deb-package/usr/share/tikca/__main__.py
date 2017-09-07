@@ -8,9 +8,13 @@
     :license: LGPL – see license.lgpl for more details.
 '''
 
-from tikca import tikca
+import tikca
+import os
 
 if __name__ == '__main__':
 
-    cfg = '/etc/pyca.conf'
-    tikca.run()
+    try:
+        pass
+    except KeyboardInterrupt:
+
+        os.exit()

@@ -38,13 +38,11 @@ class Grabber:
         self.set_recstatus("IDLE")
         self.set_ocstatus("idle")
         self.NEXTWFIID = None
+        self.pipes = {}
+        self.buses = {}
         
         logging.info("Grabber initialized")
 
-    def init_pipe(self):
-        # Create GStreamer pipeline
-        # TODO: only do this if state != playing
-        return True
 
     def check_srcstr(self, sourcestring):
         #todo implement a function that validates "udp://239.25.1.34:4444", "tcp://192.168.1.1:1234" and the like
@@ -59,64 +57,77 @@ class Grabber:
         # tsdemux name=d ! queue ! video/x-h264 ! filesink location="out.h264" d. ! queue ! audio/mpeg, mpegversion=\(int\)2,
         # stream-format=\(string\)adts ! filesink location="out.aac"
 
-        prot_src1 = TIKCFG['capture']['src1_uri'].split("://")[0]
-        if not self.check_srcstr(TIKCFG['capture']['src1_uri']):
+        prot_src1 = TIKCFG['sources']['src1']['uri'].split("://")[0]
+        if not self.check_srcstr(TIKCFG['sources']['src1']['uri']):
             logging.error("Definition of capture source 1 is not working! Definition is:")
-            logging.error(TIKCFG['capture']['src1_uri'])
+            logging.error(TIKCFG['sources']['src1']['uri'])
             return False
 
-
         if prot_src1 == "udp":
-            self.pipe1 = Gst.parse_launch("udpsrc uri=%s ! filesink location=%s"%
-                                          (TIKCFG['capture']['src1_uri'],
-                                           self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']))
+            self.pipes['src1'] = Gst.parse_launch("udpsrc uri=%s ! filesink location=%s"%
+                                          (TIKCFG['sources']['src1']['uri'],
+                                           self.RECDIR + "/" + TIKCFG['sources']['src1']['fn_orig']))
+            print(self.pipes)
 
             # todo rtsp support wieder rein
             # todo evtl das hier wieder rein?
             # 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188'
-            #self.bus1.connect('message::error', self.on_error)
-            #self.bus1.enable_sync_message_emission()
-            #self.bus1.connect('sync-message::element', self.on_sync_message)
+            #self.buses['src1'].connect('message::error', self.on_error)
+            #self.buses['src1'].enable_sync_message_emission()
+            #self.buses['src1'].connect('sync-message::element', self.on_sync_message)
 
             #self.src1 = Gst.ElementFactory.make('udpsrc', "udpsrc1")
             #self.src1.set_property('multicast-iface', TIKCFG['capture']['src1_iface'])
             #self.src1.set_property('buffer-size', 0)
 
         elif prot_src1 == "tcp":
-            src1host = TIKCFG['capture']['src1_uri'].split("://")[1]
-            src1port = TIKCFG['capture']['src1_uri'].split(":")[2]
-            self.pipe1 = Gst.parse_launch("tcpclientsrc host=%s port=%s! filesink location=%s"%
-                                          (src1host, src1port, self.RECDIR + "/" + TIKCFG['capture']['src1_fn_orig']))
-
+            src1host = TIKCFG['sources']['src1']['uri'].split("://")[1].split(":")[0]
+            src1port = TIKCFG['sources']['src1']['uri'].split(":")[2]
+            self.pipes['src1'] = Gst.parse_launch("tcpclientsrc host=%s port=%s ! filesink location=%s"%
+                                                  (src1host, src1port,
+                                                   self.RECDIR + "/" + TIKCFG['sources']['src1']['fn_orig']))
 
         # add bus - needed for EOS treatment
-        self.bus1 = self.pipe1.get_bus()
-        self.bus1.add_signal_watch()
+        self.buses['src1'] = self.pipes['src1'].get_bus()
+        self.buses['src1'].add_signal_watch()
+
+
 
         # add second stream
         try:
-            # is there a second stream defined?
-            TIKCFG['capture']['src2_uri']
-            if not self.check_srcstr(TIKCFG['capture']['src2_uri']):
-                logging.error("Definition of capture source 2 is not working! Definition is:")
-                logging.error(TIKCFG['capture']['src2_uri'])
+            prot_src2 = TIKCFG['sources']['src2']['uri'].split("://")[0]
+            if not self.check_srcstr(TIKCFG['sources']['src2']['uri']):
+                logging.error("Definition of capture source 1 is not working! Definition is:")
+                logging.error(TIKCFG['sources']['src2']['uri'])
                 return False
 
-            prot_src2 = TIKCFG['capture']['src2_uri'].split("://")[0]
             if prot_src2 == "udp":
-                self.pipe2 = Gst.parse_launch("udpsrc uri=%s ! filesink location=%s" %
-                                              (TIKCFG['capture']['src2_uri'],
-                                               self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig']))
-                # 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188'
-            elif prot_src2 == "tcp":
-                src2host = TIKCFG['capture']['src2_uri'].split("://")[1]
-                src2port = TIKCFG['capture']['src2_uri'].split(":")[2]
-                self.pipe2 = Gst.parse_launch("tcpclientsrc host=%s port=%s! filesink location=%s" %
-                                              (src2host, src2port,
-                                               self.RECDIR + "/" + TIKCFG['capture']['src2_fn_orig']))
+                self.pipes['src2'] = Gst.parse_launch("udpsrc uri=%s ! filesink location=%s" %
+                                                      (TIKCFG['sources']['src2']['uri'],
+                                                       self.RECDIR + "/" + TIKCFG['sources']['src2']['fn_orig']))
+                print(self.pipes)
 
-            self.bus2 = self.pipe1.get_bus()
-            self.bus2.add_signal_watch()
+                # todo rtsp support wieder rein
+                # todo evtl das hier wieder rein?
+                # 'video/mpegts, systemstream=(boolean)true, packetsize=(int)188'
+                # self.buses['src1'].connect('message::error', self.on_error)
+                # self.buses['src1'].enable_sync_message_emission()
+                # self.buses['src1'].connect('sync-message::element', self.on_sync_message)
+
+                # self.src2 = Gst.ElementFactory.make('udpsrc', "udpsrc2")
+                # self.src2.set_property('multicast-iface', TIKCFG['capture']['src2_iface'])
+                # self.src2.set_property('buffer-size', 0)
+
+            elif prot_src2 == "tcp":
+                src2host = TIKCFG['sources']['src2']['uri'].split("://")[1].split(":")[0]
+                src2port = TIKCFG['sources']['src2']['uri'].split(":")[2]
+                self.pipes['src2'] = Gst.parse_launch("tcpclientsrc host=%s port=%s ! filesink location=%s" %
+                                                      (src2host, src2port,
+                                                       self.RECDIR + "/" + TIKCFG['sources']['src2']['fn_orig']))
+
+            # add bus - needed for EOS treatment
+            self.buses['src2'] = self.pipes['src2'].get_bus()
+            self.buses['src2'].add_signal_watch()
 
         except KeyError:
             logging.debug("No SRC2 defined. Setting up pipeline only for SRC1.")
@@ -165,9 +176,9 @@ class Grabber:
         if False:
             logging.error("File size does not change. Restarting pipeline...")
             self.retrycount += 1
-            del self.pipe1
+            del self.pipes['src1']
             try:
-                del self.pipe2
+                del self.pipes['src2']
             except:
                 pass
 
@@ -188,11 +199,11 @@ class Grabber:
         if self.get_pipestatus() == "paused":
             logging.info("Restarting from pause")
             logging.debug("Starting pipe1")
-            self.pipe1.set_state(Gst.State.PLAYING)
+            self.pipes['src1'].set_state(Gst.State.PLAYING)
             try:
                 logging.debug("Starting pipe2")
-                self.pipe2.set_state(Gst.State.PLAYING)
-            except:
+                self.pipes['src2'].set_state(Gst.State.PLAYING)
+            except NameError:
                 logging.debug("No pipe2 defined")
             self.set_recstatus("RECORDING")
 
@@ -202,10 +213,10 @@ class Grabber:
             # start new pipeline if there's a new recording
             if self.pipe_create():
                 logging.debug("Pipe(s) created. Setting pipeline(s) to PLAYING.")
-                self.pipe1.set_state(Gst.State.PLAYING)
+                self.pipes['src1'].set_state(Gst.State.PLAYING)
                 try:
-                    self.pipe2.set_state(Gst.State.PLAYING)
-                except:
+                    self.pipes['src2'].set_state(Gst.State.PLAYING)
+                except NameError:
                     logging.debug("No pipe2 defined, skipping...")
 
                 logging.info("Recording started, pipeline is running. Everything is fine.")
@@ -223,22 +234,24 @@ class Grabber:
         # send EOS to make files complete
         if eos:
             try:
-                self.pipe1.send_event(Gst.Event.new_eos())
-                self.pipe2.send_event(Gst.Event.new_eos())
+                self.pipes['src1'].send_event(Gst.Event.new_eos())
+                self.pipes['src2'].send_event(Gst.Event.new_eos())
             except:
+                #todo should we catch more specific errors here? It might be okay to just catch all.
                 pass
 
             # waits for the message that EOS is written - "hangs" on purpose!
             logging.debug("Waiting 5 s for EOS")
-            b = self.bus1.timed_pop_filtered(5*1000*1000*1000, Gst.MessageType.ERROR | Gst.MessageType.EOS)
+            b = self.buses['src1'].timed_pop_filtered(5*1000*1000*1000, Gst.MessageType.ERROR | Gst.MessageType.EOS)
             logging.debug("EOS written")
 
         try:
-            logging.debug("GST pipe1 says: %s" % self.pipe1.set_state(Gst.State.NULL))
-            logging.debug("GST pipe2 says: %s" % self.pipe2.set_state(Gst.State.NULL))
-            del self.pipe1
-            del self.pipe2
+            logging.debug("GST pipe1 says: %s" % self.pipes['src1'].set_state(Gst.State.NULL))
+            logging.debug("GST pipe2 says: %s" % self.pipes['src2'].set_state(Gst.State.NULL))
+            del self.pipes['src1']
+            del self.pipes['src2']
         except:
+            #todo see above
             pass
 
         self.set_recstatus("STOPPED")
@@ -259,19 +272,19 @@ class Grabber:
     def record_pause(self):
         logging.info("Pausing pipeline...")
         self.set_recstatus("PAUSING")
-        logging.debug("GST pipe1 says: %s" % self.pipe1.set_state(Gst.State.PAUSED))
+        logging.debug("GST pipe1 says: %s" % self.pipes['src1'].set_state(Gst.State.PAUSED))
         try:
-            logging.debug("GST pipe2 says: %s" % self.pipe2.set_state(Gst.State.PAUSED))
-        except:
-            logging.debug("no pipe2 defined")
+            logging.debug("GST pipe2 says: %s" % self.pipes['src2'].set_state(Gst.State.PAUSED))
+        except NameError:
+            logging.debug("No GST pipe2 defined, so only pausing pipe1")
         self.set_recstatus("PAUSED")
         logging.info("Pipeline paused.")
 
 
-
     def get_pipestatus(self):
+        # Return the GST status of pipe1, which usually can be PLAYING or PAUSED, and "translate" to OC states.
         try:
-            curstate = self.pipe1.get_state(False)[1]
+            curstate = self.pipes['src1'].get_state(False)[1]
             logging.debug("GST was asked for pipe status. Answer: %s"%curstate)
             if curstate == Gst.State.PLAYING:
                 return "capturing"
@@ -279,7 +292,7 @@ class Grabber:
                 return "paused"
             else:
                 return "stopped"
-        except:
+        except (NameError, AttributeError):
             logging.debug("There is no pipeline to be asked for status.")
             return "stopped"
 

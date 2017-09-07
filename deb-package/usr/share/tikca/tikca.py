@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 import threading
 import datetime
 import time
@@ -13,7 +13,7 @@ import base64
 from configobj import ConfigObj
 import gi
 gi.require_version('Gst', '1.0')
-from gi.repository import GObject, Gst
+#from gi.repository import GObject, Gst
 import json
 import signal
 import icalendar
@@ -28,21 +28,18 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%Y-%m-%d %H:%M:%S')
 # get config files
 parser = argparse.ArgumentParser()
-parser.add_argument("--tikcacfg", help="the tikca configfile", default='/etc/tikca.conf')
+#parser.add_argument("--testrec", "-t", action="store_true", default=False)
+parser.add_argument("--tikcacfg",  help="the tikca configfile", default='/etc/tikca.conf')
 args = parser.parse_args()
 
 TIKCFG = ConfigObj(args.tikcacfg, list_values=True)
 globals()['TIKCFG'] = TIKCFG
-from grabber import Grabber
-from ingester import Ingester
 
 
-# lock to serialize console output
-#lock = threading.Lock()
 
 # here, we're adding a file handler
 try:
-    console = logging.FileHandler(TIKCFG['logging']['fn'], mode='a', encoding="UTF-8")
+    console = logging.FileHandler(TIKCFG['logging']['logdir'] + "/" + TIKCFG['logging']['fn'], mode='a', encoding="UTF-8")
     console.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s %(levelname)-8s '
                                   + '[%(filename)s:%(lineno)s:%(funcName)s()] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -51,7 +48,9 @@ try:
     # add the handler to the root logger
     logging.getLogger('').addHandler(console)
 except:
-    logging.error("Cannot write log file into '%s' - using /tmp/tikca.log instead."%TIKCFG['logging']['fn'])
+    # todo define exception in a sane way
+    logging.error("Cannot write log file into '%s' - using /tmp/tikca.log instead."%
+                  (TIKCFG['logging']['logdir'] + "/" + TIKCFG['logging']['fn']))
     console = logging.FileHandler("/tmp/tikca.log", mode='a', encoding="UTF-8")
     console.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s %(levelname)-8s '
@@ -67,7 +66,8 @@ def siginthandler(signal, frame):
     sys.exit(0)
 signal.signal(signal.SIGINT, siginthandler)
 
-#subdir_nextrecording = "aaaa" # why is that here
+from grabber import Grabber
+from ingester import Ingester
 
 class TIKCAcontrol():
     global TIKCFG
@@ -104,6 +104,7 @@ class TIKCAcontrol():
                                                 RequestHandlerClass=UDPHandler)
             return True
         except:
+            # todo define exception in a sane way
             logging.error("Could not start UDP server!")
             return False
 
@@ -111,11 +112,12 @@ class TIKCAcontrol():
         try:
             self.sendsocket.connect(self.dest)
         except:
+            # todo define exception in a sane way
             logging.error("Cannot connect to UDP CtrlStation (%s:%s)"%
                           (TIKCFG['udp']['ctrlstation'], TIKCFG['udp']['sendport']))
 
     def send_email(self, subject, body):
-        #todo dringend korrigieren: hier kommt kein bool!
+        #todo dringend config korrigieren: hier kommt kein bool!
         if TIKCFG['watch']['mail'] == "False":
             return True
         else:
@@ -136,6 +138,7 @@ class TIKCAcontrol():
                 server.close()
                 logging.debug("Sent mail to %s." % recipient)
             except:
+                # todo define exception in a sane way
                 logging.error("Could not send mail to %s."%recipient)
 
     def get_outlet_state(self, n):
@@ -147,7 +150,7 @@ class TIKCAcontrol():
                 url = "http://%s/statusjsn.js?components=1073741823" % (
                     TIKCFG['outlet']['hosts'][n])
             try:
-                jsonstring = ingester.curlreq(url).decode("UTF-8")
+                jsonstring, _ = ingester.curlreq(url).decode("UTF-8")
                 jsondata = json.loads(jsonstring)
             # outlet nr counting from the config file starts with 1,
             # the json array stars with 0, so we have to compensate:
@@ -155,6 +158,7 @@ class TIKCAcontrol():
                 return(jsondata['outputs'][jsonoutletnr]['state'],
                        jsondata['outputs'][jsonoutletnr]['name'])
             except:
+                    # todo define exception in a sane way
                     logging.error("Cannot read outlet from '%s'"%url)
                     return(0, None)
 
@@ -181,7 +185,7 @@ class TIKCAcontrol():
 
         else:
             logging.error("Cannot set weird state %s for outlet."%state)
-        pass
+
 
     def watch_lights(self):
         # watches "recording"/"camera on" light in expected intervals and sets it on/off, if necessary
@@ -223,25 +227,26 @@ class TIKCAcontrol():
         # Get schedule for capture agent
         # this function is mostly taken from Lars Kiesow's pyCA, I admit it. - PZ
         try:
-            if len(lookahead) > 1:
+            if lookahead > 1:
                 cutoff = '&cutoff=%i' % ((self.get_timestamp() + lookahead) * 1000)
                 calurl = '%s/recordings/calendars?agentid=%s%s' % \
                                 (TIKCFG['server']['url'], TIKCFG['agent']['name'], cutoff)
-                print(calurl)
-            vcal = ingester.curlreq(calurl)
+            vcal, _ = ingester.curlreq(calurl)
         except:
+            # todo define exception in a sane way
             logging.error('Could not get schedule from %s'%calurl)
             return None
 
         cal = None
         try:
             try:
-                cal = icalendar.Calendar.from_string(vcal)
+                cal = icalendar.Calendar.from_string(vcal.decode('utf-8'))
             except AttributeError:
-                cal = icalendar.Calendar.from_ical(vcal)
+                cal = icalendar.Calendar.from_ical(vcal.decode('utf-8'))
             logging.debug("Got valid calendar.")
             #todo num of cal items (no, it's not len(cal))
         except:
+            # todo define exception in a sane way
             logging.error('Could not parse ical')
             #logging.error(traceback.format_exc())
             return None
@@ -275,8 +280,11 @@ class TIKCAcontrol():
             #TODO which dir is this?
             with open(self.RECDIR + "/" + "wfiid.txt", "w") as f:
                 logging.debug("Noting WFIID %s as currently playing...")
-                f.write(timestamp + ";" + wfiid)
+                f.write(timestamp + ";" + wfiid + "\n")
+        except:
+            pass
 
+        #todo This is not done! Needs to be done by mid-march!
 
 
 
@@ -358,7 +366,7 @@ class TIKCAcontrol():
                     logging.debug("Starting recording.")
                     grabber.record_start()
 
-                    if not uid == None:
+                    if int(uid) > 0:
                         logging.debug("Telling Opencast core that WFIID %s is capturing."%uid)
                         ingester.set_oc_recstate("capturing", uid)
 
@@ -411,34 +419,24 @@ class TIKCAcontrol():
     def hostcheck(self, host):
         status, result = subprocess.getstatusoutput("ping -c2 -w2 " + str(host))
         if status == 0:
-            logging.debug("Host %s is up!"%str(host))
             return True
         else:
-            logging.debug("Host %s is down!"%str(host))
             return False
 
     def watch_hosts(self):
         # check hosts via ping whether they are up
         # if we are recording, we suppose that the hosts in question are up, so we're not testing
         if grabber.get_recstatus() != "RECORDING":
-            if len(TIKCFG['capture']['src1_adminhost']) > 6:
-                # if there's an admin host given, ping it
-                logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src1_adminhost'])
-                if not (self.hostcheck(TIKCFG['capture']['src1_adminhost'])):
-                    logging.error("Host %s is down!"%TIKCFG['capture']['src1_adminhost'])
-                else:
-                    logging.debug("Host %s is up!" % TIKCFG['capture']['src1_adminhost'])
-
-            try:
-                TIKCFG['capture']['src2_adminhost']
-                if len(TIKCFG['capture']['src2_adminhost']) > 6:
-                    logging.debug("Checking whether host %s is up..."%TIKCFG['capture']['src2_adminhost'])
-                    if not (self.hostcheck(TIKCFG['capture']['src2_adminhost'])):
-                        logging.error("Host %s is down!"%TIKCFG['capture']['src2_adminhost'])
+            for srcname in TIKCFG['capture']['sources']:
+                # if there's a hostname/IP given, ping it
+                host = TIKCFG['sources'][srcname]['adminhost']
+                if len(host) > 3:
+                    logging.debug("Checking whether host %s is up..."% host)
+                    if not (self.hostcheck(host)):
+                        logging.error("Host '%s' is down!"% host)
                     else:
-                        logging.debug("Host %s is up!" % TIKCFG['capture']['src2_adminhost'])
-            except KeyError:
-                pass
+                        logging.debug("Host '%s' is up!" % host)
+
         self.tp = threading.Timer(float(TIKCFG['watch']['enc_time']), self.watch_hosts)
         self.tp.start()
     
@@ -460,23 +458,11 @@ class UDPHandler(socketserver.BaseRequestHandler):
     def handle(self):
         global grabber, mycontrol, ingester
 
-        data = self.request[0]
+        rawdata = self.request[0]
         socket = self.request[1]
-        data = data.decode('UTF-8')
+        data = rawdata.decode('UTF-8')
+        logging.debug("UDP message from %s: '%s'" % (format(self.client_address[0]), data.strip()))
 
-        # To stop messing up the logfile, we will only be reporting every 30th occurence of the same message.
-        if self.lastmsg == data:
-            self.messagecount+=1
-            if self.messagecount > 30:
-                logging.debug("UDP message (30 times) from %s: '%s'"%(format(self.client_address[0]), data.strip()))
-                self.lastmsg = data
-                self.messagecount = 0
-        else:
-            logging.debug("UDP message from %s: '%s'" % (format(self.client_address[0]), data.strip()))
-            self.lastmsg = data
-        # TODO: Messagecount in config file
-
-        self.lastmsg = data
 
         # make sure only one thing is done at a time
         #todo does this make sense?
@@ -504,26 +490,26 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 grabber.setup_recorddir(subdir=mycontrol.NEXTSUBDIR, epidata=mycontrol.NEXTEPISODE)
                 mycontrol.send_email("TIKCA on %s: Recording started by command."%TIKCFG['agent']['name'], "")
                 mycontrol.block_cmd = False
-                logging.debug("Creating pipeline in standby...")
+                logging.info("Creating pipeline in standby...")
                 grabber.pipe_create()
-                logging.debug("Starting recording.")
+                logging.info("Starting recording.")
                 grabber.record_start()
-                logging.debug("Telling Opencast core that WFIID %s is capturing."%grabber.NEXTWFIID)
+                logging.info("Telling Opencast core that WFIID %s is capturing."%grabber.NEXTWFIID)
                 ingester.set_oc_recstate("capturing", grabber.NEXTWFIID)
 
             elif grabber.get_recstatus() == "PAUSED":
-                logging.debug("Restarting recording from pause.")
+                logging.info("Restarting recording from pause.")
                 grabber.record_start()
                 mycontrol.block_cmd = False
             else:
-                logging.error("Got UDP command to START recording while recording is going on already.")
+                logging.warning("Got UDP command to START recording while recording is going on already.")
             mycontrol.block_cmd = False
 
         if ":STOP" in data:
             if grabber.get_recstatus() in ["RECORDING", "STARTING", "PAUSED", "PAUSING"]:
                 mycontrol.send_email("TIKCA on %s: Recording stopped by command." % TIKCFG['agent']['name'], "")
                 mycontrol.block_cmd = True
-                logging.debug("Getting UDP command to stop recording")
+                logging.info("Getting UDP command to stop recording")
                 logging.info("Stopping recording")
                 grabber.record_stop()
                 ingester.write_dirstate(grabber.RECDIR, "STOPPED")
@@ -531,7 +517,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 grabber.CURSUBDIR = None
                 mycontrol.block_cmd = False
             else:
-                logging.error("Got UDP command to STOP recording, but no recording is going on.")
+                logging.warning("Got UDP command to STOP recording, but no recording is going on.")
 
 
         if ":PAUSE" in data:
@@ -540,7 +526,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
             if grabber.get_pipestatus() == "capturing":
                 grabber.record_pause()
             else:
-                logging.error("Got UDP command to PAUSE recording, but no recording is going on.")
+                logging.warning("Got UDP command to PAUSE recording, but no recording is going on.")
             mycontrol.block_cmd = False
 
         if ":STATE" in data:
@@ -604,8 +590,9 @@ if len(TIKCFG['outlet']['hosts']) > 0:
 # to run recording:
 
 def do_testrecording(length=15.0, with_pause=True):
+    logging.info("Starting a test recording as we've been told.")
     grabber.setup_recorddir(subdir="Testrecording")
-    grabber.standby()
+    grabber.pipe_create()
     b = threading.Timer(1.0, grabber.record_start)
     b.start()
 
@@ -613,16 +600,17 @@ def do_testrecording(length=15.0, with_pause=True):
     c.start()
 
     if with_pause:
-        d = threading.Timer(1.0 + length/3, grabber.record_pause)
-        print("doing a pause at %f"%(length/3))
+        d = threading.Timer(1.0 + length/2, grabber.record_pause)
+        print("doing a pause at %f"%(length/2))
         d.start()
 
-        e = threading.Timer(1.0 + length/3 + 1.2, grabber.record_start)
-        print("restarting from pause at %f"%(length/3 + 1.2))
+        e = threading.Timer(1.0 + length/2 + 1.2, grabber.record_start)
+        print("restarting from pause at %f"%(length/2 + 1.2))
         e.start()
 
     a = threading.Timer(1.0+length, grabber.record_stop)
     a.start()
 
+#if args.testrec:
 
 #do_testrecording(20)
