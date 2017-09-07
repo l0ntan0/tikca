@@ -4,44 +4,67 @@
 
 [agent]
 name                    = "tikcatest"
-update_frequency        = 5	# seconds
-cal_lookahead           = 14    # days
 address                 = "tikcatest.loc"
-ignore_timezone         = "True"
+ignore_timezone         = "True"    # right now, tikca ignores the timezones anyway. sorry to say.
+# update_frequency: interval in seconds between updates to opencast core
+update_frequency        = 5
+# cal_lookahead: how many days should the capture agent look ahead?
+cal_lookahead           = 14
+
+
 
 [server]
-url                     = "https://youropencastserver.de"
-username                = "matterhorn_system_account"
+url                     = "https://nfldevocaio2.rus.uni-stuttgart.de"
+username                = "opencast_system_account"
 password                = "CHANGE_ME"
+version                 = "3"
+# autostart (bool): record automatically when scheduled (for rooms without ctrl station)
+autostart               = False
+
+
+
 
 [capture]
-directory               = "/srv/recordings"
-
-src1_uri                = "udp://239.25.1.1:5555"
-src1_stdflavor          = "presentation/source"
-src1_fn_orig            = "stream1.mpegts"
-src1_fn_vid             = "src1.mkv"
-src1_fn_aud             = "src1.aac"
-src1_iface              = "eth0"
-src1_adminhost          = "172.25.7.33"
-
-src2_uri                = "udp://239.25.1.1:5556"
-src2_stdflavor          = "presenter/source"
-src2_fn_orig            = "stream2.mpegts"
-src2_fn_vid             = "src2.mkv"
-src2_fn_aud             = "src2.aac"
-src2_iface              = "eth0"
-src2_adminhost          = "172.25.7.34"
-
-stopafterpaused         = 15    # time in minutes after which a paused recording is considered finished
-maxduration             = 360   # time in minutes after which a recording is stopped (assuming somebody forgot to hit stop)
+# directory: ...in which the recordings should be stored
+directory               = "/srv/recordings/"
+# sources: list of recording sources later to be defined under "sources" (see below)
+sources                 = src1, src2, src3
+# stopafterpaused: time in minutes after which a paused recording is considered finished
+stopafterpaused         = 15
+# maxduration: time in minutes after which a recording is stopped (assuming somebody forgot to hit stop button)
+maxduration             = 360
 stdflavor_audio         = presenter-audio/source
-
 retry                   = 4
 retrywait               = 20
 
-# autostart (bool): record automatically when scheduled (for rooms without ctrl station)
-autostart               = False
+
+
+
+[sources]
+    [[src1]]
+    uri                = "udp://239.25.1.1:5555"
+    stdflavor          = "presentation/source"
+    fn_orig            = "stream1.mts"
+    prefix_upfile      = "src1"
+    iface              = "eth0"
+    adminhost          = "172.25.7.32"
+
+    [[src2]]
+    uri                = "udp://239.25.1.1:5556"
+    stdflavor          = "presenter/source"
+    fn_orig            = "stream2.mts"
+    prefix_upfile      = "src2"
+    iface              = "eth0"
+    adminhost          = "172.25.7.34"
+
+    [[src3]]
+    uri                = "udp://239.25.1.1:5556"
+    stdflavor          = "presenter/source"
+    fn_orig            = "stream2.mts"
+    prefix_upfile      = "src3"
+    iface              = "eth0"
+    adminhost          = "172.25.7.34"
+
 
 
 [udp]
@@ -51,9 +74,10 @@ listenhost              = "127.0.0.1"
 listenport              = 8888
 sendport                = 8889
 # Is every host allowed to give commands? If so, set to "*".
-allowedhost             = "*"	
+allowedhost             = "*"
 endchar_send            = "\n"
 endchar_rcv             = "\n"
+
 
 
 [outlet]
@@ -66,13 +90,25 @@ users                   = "root", "root"
 passwords               = "admin", "admin"
 
 
+
 [ingester]
 # Here, you can define the behaviour of the ingester service
+# looptime: interval between two ingester runs
 looptime                = 1     # in minutes
 retrytimes              = 5     # number of tries to ingest a package
-probe                   = "avprobe" 	#   could be ffprobe or avprobe
-moveto                  = "ingested"    # subdir to move ingested files to. Leavy empty if this is not intended
-ingestas                = "mux" # "mux": mux a mp4 file. "split": split mpegts to mkv and aac.
+# probe: which command to use for probing the file(s) (supported: ffprobe or avprobe)
+probe                   = "avprobe"
+# moveto: subdir to move ingested files to. Leave empty if this is not intended
+moveto                  = "ingested"
+# ingestas:
+#   "mux": mux a mp4 file.
+#   "split": split mpegts to mkv and aac.
+#  (default: mux)
+ingestas                = "mux"
+# del_after_ing: should the mp4/mkv/aac file(s) be deleted after successful ingest?
+# (N.B.: The original mpegts files will *never* be deleted)
+del_after_ingest        = True
+
 
 
 [unscheduled]
@@ -81,17 +117,23 @@ serid                   = "c2a185a3-0bf4-4163-b241-6eface8ae92b"
 # workflow with which unscheduled recordings should be uploaded
 workflow                = "aonly"
 
+
+
+
 [logging]
-logdir			= "/var/log/tikca/"
+logdir                  = "/var/log/tikca/"
 fn                      = "tikca.log"
-comm                    = "tikca_comm.log"
-ingestfn		= "tikca_ingest.log"
+comm                    = "udpcomm.log"
+ingestfn                = "ingester.log"
+
+
+
 
 [watch]
 df_time                 = 3600   # time between checks in seconds
-df_space                = 4000 # in MB
-enc_time                = 30    # time between checks of encoder pings in seconds
-enc_check               = True  # check whether the encoders are up
+df_space                = 4000   # minimum free space in MB - below that, no recording will be split/muxed
+enc_check               = True   # check whether the encoders are up
+enc_time                = 30     # time between checks of encoder pings in seconds
 mail                    = False
 mailto                  = "your@mailadress.com"
 mailserver              = "mailrelay.yourhost.com"
